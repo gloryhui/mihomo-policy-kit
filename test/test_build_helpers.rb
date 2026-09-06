@@ -234,6 +234,59 @@ class BuildHelpersTest < Minitest::Test
   def test_command_path_missing_returns_nil
     assert_nil BuildHelpers.command_path('mpk-definitely-not-a-real-command-xyz')
   end
+  # ---- 订阅源规范化（真实 Smoke 暴露：base64 机场订阅） ----
+
+  def test_normalize_subscription_file_detects_yaml
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, 'sub.yaml')
+      File.binwrite(path, "proxies:\n  - name: A\n    type: ss\n    server: 127.0.0.1\n")
+
+      format, count = BuildHelpers.normalize_subscription_file(path)
+      assert_equal :yaml, format
+      assert_nil count
+      assert_includes File.binread(path), 'proxies:'
+    end
+  end
+
+  def test_normalize_subscription_file_decodes_base64_uri_list
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, 'sub.txt')
+      plain = [
+        'vless://00000000-0000-0000-0000-000000000000@127.0.0.1:443?security=reality&encryption=none&flow=xtls-rprx-vision&pbk=FAKE&sid=0&sni=example.com#Fake-US-01',
+        'ss://YWVzLTEyOC1nY206ZmFrZXBhc3N3b3Jk@127.0.0.1:8388#Fake-JP-01',
+        'trojan://fake-password@127.0.0.1:443#Fake-HK-01'
+      ].join("\n") + "\n"
+      File.binwrite(path, [plain].pack('m0'))
+
+      format, count = BuildHelpers.normalize_subscription_file(path)
+      assert_equal :uri_list, format
+      assert_equal 3, count
+      # 文件已被转换为标准 Mihomo YAML proxies（含解析字段，不含 base64 文本）
+      doc = YAML.safe_load(File.read(path, encoding: 'UTF-8'), permitted_classes: [Symbol], aliases: true)
+      proxies = doc['proxies']
+      assert_equal 3, proxies.length
+      types = proxies.map { |p| p['type'] }
+      assert_includes types, 'vless'
+      assert_includes types, 'ss'
+      assert_includes types, 'trojan'
+      vless = proxies.find { |p| p['type'] == 'vless' }
+      assert_equal '127.0.0.1', vless['server']
+      assert_equal 443, vless['port']
+      assert_equal 'Fake-US-01', vless['name']
+      refute File.binread(path).match?(%r{^\s*[A-Za-z0-9+/=]{10,}\s*$})
+    end
+  end
+
+  def test_normalize_subscription_file_returns_unknown_for_junk
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, 'junk.txt')
+      File.binwrite(path, 'plain text that is not yaml or base64')
+
+      format, count = BuildHelpers.normalize_subscription_file(path)
+      assert_equal :unknown, format
+      assert_nil count
+    end
+  end
 # ---- 可恢复 promotion（Sol Review #2） ----
 
   def test_promote_file_replaces_existing_output_and_cleans_backup

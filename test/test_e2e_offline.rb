@@ -65,6 +65,16 @@ class OfflineE2ETest < Minitest::Test
     end
   end
 
+  # 使用脱敏 base64 订阅 fixture（机场常见格式）验证完整链路。
+  def build_config_base64(dir, dns_profile:, output:)
+    cfg = build_config(dir, dns_profile: dns_profile, output: output)
+    cfg['source'] = { 'file' => File.join(ROOT, 'test/providers/fixtures/source-base64-subscription.txt') }
+    cfg['provider_options']['smart_config_kit']['local_script'] =
+      File.join(ROOT, 'test/providers/fixtures/fake-uri-list-upstream.sh')
+    cfg['validation']['require_targets'] = %w[global direct]
+    cfg
+  end
+
   def run_build(config_path)
     stdout, stderr, status = Open3.capture3(ruby, File.join(ROOT, 'scripts/build.rb'), config_path)
     [stdout, stderr, status]
@@ -148,6 +158,24 @@ class OfflineE2ETest < Minitest::Test
     end
   end
 
+
+  def test_base64_subscription_source_e2e
+    setup_workdir do |dir|
+      output = File.join(dir, 'dist', 'mihomo.yaml')
+      config_path = File.join(dir, 'config.yaml')
+      write_lf(config_path, YAML.dump(build_config_base64(dir, dns_profile: 'upstream', output: output)))
+
+      stdout, stderr, status = run_build(config_path)
+      assert status.success?, "build failed: #{stdout} #{stderr}"
+      assert File.file?(output), 'output missing'
+      doc = MPK::YAMLUtil.load_file(output)
+      assert_operator Array(doc['proxies']).length, :>, 0
+      # source 计数来自 base64 URI 解码（3 行）；最终 proxies 非空
+      assert_operator Array(doc['proxies']).length, :>=, 1
+      refute doc.key?('global-client-fingerprint')
+      assert_equal 'memconservative', doc['geodata-loader']
+    end
+  end
   def test_failed_build_keeps_existing_output
     setup_workdir do |dir|
       output = File.join(dir, 'dist', 'mihomo.yaml')

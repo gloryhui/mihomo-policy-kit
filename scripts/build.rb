@@ -63,9 +63,14 @@ begin
       BuildHelpers.fetch_to(source_url, working_yaml, log: "$#{env_name}")
     end
 
+    # 机场订阅可能是 Mihomo YAML 或 base64 节点 URI 列表；先规范化再统计。
+    source_format, uri_count = BuildHelpers.normalize_subscription_file(working_yaml)
+    puts "[source] format=#{source_format}"
+
     source_document = MPK::YAMLUtil.load_file(working_yaml)
     source_proxy_count = Array(source_document['proxies']).length
     source_provider_count = source_document['proxy-providers'].is_a?(Hash) ? source_document['proxy-providers'].length : 0
+    source_proxy_count = uri_count if source_format == :uri_list && source_proxy_count.zero?
     puts "[source] proxies=#{source_proxy_count} proxy-providers=#{source_provider_count}"
 
     if source_proxy_count.zero? && source_provider_count.zero?
