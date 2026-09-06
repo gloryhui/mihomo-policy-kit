@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+CONFIG_FILE="${MPK_CONFIG:-$ROOT_DIR/config/config.yaml}"
+
+usage() {
+  cat <<'EOF'
+mihomo-policy-kit (mpk)
+
+Usage:
+  ./bin/mpk doctor
+  ./bin/mpk build [config.yaml]
+  ./bin/mpk validate <mihomo.yaml>
+  ./bin/mpk version
+
+Environment:
+  MPK_CONFIG       default config file
+  MPK_SOURCE_URL   airport subscription URL (recommended)
+EOF
+}
+
+cmd_doctor() {
+  local failed=0
+
+  echo "[doctor] root: $ROOT_DIR"
+  echo "[doctor] uname: $(uname -a 2>/dev/null || true)"
+
+  for cmd in bash ruby curl; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+      printf '[doctor] %-8s OK  %s\n' "$cmd" "$(command -v "$cmd")"
+    else
+      printf '[doctor] %-8s MISSING\n' "$cmd"
+      failed=1
+    fi
+  done
+
+  if ruby -e 'require "yaml"; require "digest"' >/dev/null 2>&1; then
+    echo "[doctor] ruby yaml/digest OK"
+  else
+    echo "[doctor] ruby yaml/digest MISSING"
+    failed=1
+  fi
+
+  if command -v mihomo >/dev/null 2>&1; then
+    echo "[doctor] mihomo OK: $(mihomo -v 2>/dev/null | head -n 1 || true)"
+  else
+    echo "[doctor] mihomo not found (optional, but strongly recommended)"
+  fi
+
+  if [ -f "$ROOT_DIR/vendor/OpenClash(mihomo).sh" ]; then
+    echo "[doctor] local Smart-Config-Kit Normal script: found"
+  else
+    echo "[doctor] local Smart-Config-Kit Normal script: not found; build will use remote fallback"
+  fi
+
+  return "$failed"
+}
+
+case "${1:-}" in
+  doctor)
+    shift
+    cmd_doctor "$@"
+    ;;
+  build)
+    shift
+    if [ "$#" -gt 0 ]; then
+      CONFIG_FILE="$1"
+    fi
+    exec ruby "$ROOT_DIR/scripts/build.rb" "$CONFIG_FILE"
+    ;;
+  validate)
+    shift
+    [ "$#" -eq 1 ] || { usage; exit 2; }
+    exec ruby "$ROOT_DIR/scripts/validate.rb" "$1"
+    ;;
+  version)
+    echo "mihomo-policy-kit v0.1.0"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "Unknown command: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
