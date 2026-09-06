@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'yaml'
+require 'uri'
 require 'fileutils'
 require 'tmpdir'
 require 'tempfile'
@@ -66,6 +67,198 @@ module BuildHelpers
   end
 
   # 跨平台命令查找。Windows 上使用 PATHEXT 扩展名列表，不依赖 /bin/sh。
+  # 规范化机场订阅文件：机场订阅可能是 Mihomo YAML，也可能是 base64 编码的
+  # 节点 URI 列表（vless:// / ss:// / trojan:// 等）。
+  # 若是 base64 节点列表，就地解码并写回文件，后端 Provider（Smart-Config-Kit）
+  # 能直接消费 URI 列表。返回类型与节点行数供调用方统计。
+  # 若既不是 YAML 也不是 base64，原样保留并返回 :unknown。
+  # 规范化机场订阅文件：可能是 Mihomo YAML，也可能是 base64 编码的节点 URI
+  # 列表（vless:// / ss:// / trojan://）。URI 列表会先转换为标准 Mihomo YAML
+  # （proxies: 条目），使下游 Provider（Smart-Config-Kit）与统计逻辑都能消费。
+  # 返回 [:yaml, count] / [:uri_list, count] / [:unknown, nil]。
+  def normalize_subscription_file(path)
+    content = File.binread(path).strip
+    return [:yaml, nil] if yaml_subscription?(content)
+
+    decoded = decode_base64_nodes(content)
+    return [:unknown, nil] if decoded.nil?
+
+    proxies = uri_list_to_proxies(decoded)
+    if proxies.empty?
+      # 解码成功但不是可识别的节点 URI：原样写回解码文本，保持向后兼容
+      File.binwrite(path, decoded)
+      [:uri_list, 0]
+    else
+      doc = { 'proxies' => proxies }
+      File.binwrite(path, YAML.dump(doc))
+      [:uri_list, proxies.length]
+    end
+  end
+
+  # 文件内容是否可直接按 YAML 解析且包含 proxies / proxy-providers。
+  def yaml_subscription?(content)
+    return false if content.empty?
+
+    doc = YAML.safe_load(content, permitted_classes: [Symbol], aliases: true)
+    doc.is_a?(Hash) && (doc['proxies'].is_a?(Array) || doc['proxy-providers'].is_a?(Hash))
+  rescue Psych::SyntaxError
+    false
+  end
+
+  # 尝试严格 base64 解码为节点 URI 列表；失败或结果不像 URI 列表时返回 nil。
+  def decode_base64_nodes(content)
+    stripped = content.gsub(/\s+/, '')
+    return nil if stripped.empty?
+    return nil if stripped.match?(%r{[<>\u4e00-\u9fff]})
+
+    decoded = stripped.unpack1('m0')
+    return nil if decoded.nil? || decoded.empty?
+
+    uri_lines = decoded.lines.count { |line| line.strip.include?('://') }
+    return nil if uri_lines.zero?
+
+    decoded
+  rescue ArgumentError
+    nil
+  end
+  # 把 base64 解码后的节点 URI 列表解析为 Mihomo proxy 条目数组。
+  # 支持 vless / vmess / ss / trojan 常见格式；无法解析的行跳过。
+  def uri_list_to_proxies(decoded)
+    decoded.lines.filter_map do |line|
+      uri = line.strip
+      next if uri.empty? || uri.start_with?('#')
+
+      begin
+        parse_node_uri(uri)
+      rescue StandardError
+        nil
+      end
+    end
+  end
+
+  # 解析单个节点 URI 为 Mihomo proxy Hash（vless / ss / trojan / vmess）。
+  def parse_node_uri(uri)
+    scheme, rest = uri.split('://', 2)
+    return nil if rest.nil? || rest.empty?
+
+    fragment = uri.split('#').last.to_s
+    name = begin
+      URI.decode_www_form_component(fragment)
+    rescue ArgumentError
+      fragment
+    end
+    name = "#{scheme}-#{rest[0, 12]}" if name.empty? || name == fragment && fragment.include?('%')
+
+    case scheme
+    when 'vless', 'vmess'
+      parse_vless_like(scheme, rest, name)
+    when 'ss'
+      parse_ss(rest, name)
+    when 'trojan'
+      parse_trojan(rest, name)
+    end
+  end
+
+  # vless://uuid@host:port?params#name
+  def parse_vless_like(scheme, rest, name)
+    body, fragment = rest.split('#', 2)
+    body, query = body.split('?', 2)
+    userinfo, authority = body.split('@', 2)
+    host, port = authority.to_s.split(':', 2)
+
+    proxy = {
+      'name' => name,
+      'type' => scheme,
+      'server' => host,
+      'port' => port.to_i
+    }
+    if scheme == 'vmess'
+      proxy['uuid'] = userinfo
+    else
+      proxy['uuid'] = userinfo
+    end
+    proxy['cipher'] = 'auto' if scheme == 'vmess'
+
+    unless query.nil? || query.empty?
+      params = URI.decode_www_form(query).to_h
+      proxy['tls'] = params['security'].to_s != 'none' if params.key?('security')
+      proxy['tls'] = true if params.key?('tls')
+      proxy['servername'] = params['sni'] if params.key?('sni')
+      proxy['sni'] = params['sni'] if params.key?('sni')
+      proxy['flow'] = params['flow'] if params.key?('flow')
+      proxy['network'] = params['type'] if params.key?('type')
+      proxy['reality-opts'] = { 'public-key' => params['pbk'], 'short-id' => params['sid'] } if params.key?('pbk')
+      proxy['client-fingerprint'] = params['fp'] if params.key?('fp')
+      proxy['udp'] = true
+    end
+    proxy.compact
+  end
+
+  # ss://base64(method:password)@host:port#name 或 ss://method:password@host:port
+  def parse_ss(rest, name)
+    body, fragment = rest.split('#', 2)
+    body, query = body.split('?', 2)
+    userinfo, authority = body.split('@', 2)
+
+    if authority.nil? && userinfo.include?('@')
+      authority = userinfo.split('@').last
+      userinfo = userinfo.split('@').first
+    end
+
+    method = nil
+    password = nil
+    if userinfo.to_s.include?(':')
+      method, password = userinfo.split(':', 2)
+    else
+      decoded = userinfo.to_s.unpack1('m0')
+      if decoded && decoded.include?(':')
+        method, password = decoded.split(':', 2)
+      end
+    end
+
+    host, port = authority.to_s.split(':', 2)
+    return nil if host.nil? || host.empty? || port.nil?
+
+    proxy = {
+      'name' => name,
+      'type' => 'ss',
+      'server' => host,
+      'port' => port.to_i,
+      'cipher' => method,
+      'password' => password
+    }
+    unless query.nil? || query.empty?
+      params = URI.decode_www_form(query).to_h
+      proxy['udp'] = true
+      proxy['plugin'] = params['plugin'] if params.key?('plugin')
+    end
+    proxy.compact
+  end
+
+  # trojan://password@host:port?params#name
+  def parse_trojan(rest, name)
+    body, fragment = rest.split('#', 2)
+    body, query = body.split('?', 2)
+    userinfo, authority = body.split('@', 2)
+    host, port = authority.to_s.split(':', 2)
+    return nil if host.nil? || host.empty? || port.nil?
+
+    proxy = {
+      'name' => name,
+      'type' => 'trojan',
+      'server' => host,
+      'port' => port.to_i,
+      'password' => userinfo
+    }
+    unless query.nil? || query.empty?
+      params = URI.decode_www_form(query).to_h
+      proxy['sni'] = params['sni'] if params.key?('sni')
+      proxy['servername'] = params['sni'] if params.key?('sni')
+      proxy['tls'] = params['security'].to_s != 'none' if params.key?('security')
+      proxy['udp'] = true
+    end
+    proxy.compact
+  end
   def command_path(command)
     command = command.to_s
     return nil if command.empty?
