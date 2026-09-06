@@ -1,197 +1,175 @@
 # 开发流水线
 
-mihomo-policy-kit 使用 GitHub Issue 作为任务队列，GitHub PR 作为交付物，GitHub Actions 作为自动验证。
+mihomo-policy-kit 当前采用 **一个启动 Issue + 一个开发分支 + 一个总 PR** 的批次开发方式。
 
-目标不是造一套复杂项目管理系统，而是让“设计 / 执行 / 审查”明确分离。
+我们不再把一个小阶段拆成十几个状态 Issue。项目规模还没大到需要给自己造一套 Jira 赝品。
 
 ## 流程
 
 ```text
-Sol 检查 main / PR / CI
+Sol 检查 main / Issues / PR / CI
         ↓
-Sol 拆分一个小任务
+确定当前阶段边界与前后依赖
         ↓
-创建 [READY] Issue
+创建一个 [START] Batch Issue
         ↓
-本地 Codex 领取
+Codex 读取启动 Issue
         ↓
-Issue -> [DOING]
+Issue -> [RUNNING]
         ↓
-实现 + 测试
+在一个分支中按顺序连续开发
         ↓
-创建 PR
+每一步补测试、局部验证
+        ↓
+整个批次完整回归
+        ↓
+创建一个总 PR
         ↓
 Issue -> [REVIEW]
         ↓
-Sol Review + CI
+Sol 统一 Review + CI
      ┌──┴──┐
    需修改   通过
      ↓       ↓
- Codex返工   合并
-             ↓
+ 原分支返工  Merge
+              ↓
         Issue -> [DONE]
-             ↓
-        Sol 创建下一 [READY]
+              ↓
+        Sol 安排下一 Batch
 ```
 
-## 为什么一次只开放一个 READY
+## GitHub 是唯一事实源
 
-当前项目仍处在早期架构阶段。Provider、Overlay、发布器、多客户端输出之间存在依赖关系。
+新开 ChatGPT / Codex 会话以后，不应该依赖旧聊天才能继续。
 
-因此默认保持：
+GitHub 中必须能恢复：
+
+- 当前 Roadmap / Epic
+- 当前 `[START]` / `[RUNNING]` / `[REVIEW]` Batch Issue
+- Batch Issue 中的执行顺序和验收项
+- 当前开发分支
+- 当前总 PR
+- CI 状态
+- BLOCKED 原因
+
+聊天只用于讨论，不作为流水线状态存储。
+
+## Roadmap 顺序
+
+当前 Roadmap 顺序固定为：
 
 ```text
-READY <= 1
-DOING <= 1
+V0.1 可靠完成 Mihomo + Smart-Config-Kit Normal 构建链路
+  ↓
+V0.2 私有 HTTPS 发布、current/previous、rollback
+  ↓
+V0.3 Provider 接口稳定化并接入第二 Provider
+  ↓
+V0.4 非 Mihomo 多客户端输出
 ```
 
-允许存在多个 `[REVIEW]` 只用于返工或特殊情况，但正常情况下也应保持单线推进。
+不要把 V0.2/V0.3/V0.4 塞进 V0.1 的代码 PR。
 
-这样可以确保后一任务是在前一任务已经验证后的代码基线上设计，而不是并行制造几个互相冲突的未来。
+## Batch Issue 的写法
 
-## Epic 与 Task
+每个启动 Issue 必须包含：
 
-Roadmap 使用 Epic Issue，例如：
+- 当前基线 main SHA / 需要继承的已有分支或 PR
+- 本批次明确目标
+- 不做什么
+- 1..N 的严格执行顺序
+- 每一步验收条件
+- 测试要求
+- 最终 PR 要求
+- BLOCKED 条件
+
+Codex 不自行重新排序，也不自行增加下一阶段功能。
+
+## 分支与 PR
+
+一个 Batch 只使用一个开发分支，例如：
 
 ```text
-[V0.1] 真实机场订阅端到端验证
-[V0.2] 私有 HTTPS 订阅发布器
-[V0.3] 第二 Provider
-[V0.4] 多客户端输出
+codex/batch-v0.1
 ```
 
-Epic 不能直接作为 Codex 的日常领取任务。
-
-Sol 应将 Epic 拆成较小 Task，例如：
+整个 Batch 最后只提交一个总 PR：
 
 ```text
-[READY][V0.1-T01] 增加离线端到端构建 Fixture 与集成测试
-[READY][V0.1-T02] 真实订阅构建与敏感信息保护验证
-[READY][V0.1-T03] Clash Party / Verge / Nikki 客户端兼容验证
-```
-
-每个 Task 应尽量满足：
-
-- 1 个明确目的
-- 可独立测试
-- 不依赖人工猜测验收结果
-- 修改范围可控
-- 完成后 main 比之前更可信
-
-## Pipeline Manager 检查项
-
-每次安排新任务前，Sol 检查：
-
-1. `main` 最新提交和 CI 是否正常。
-2. 是否有 `[DOING]` Issue。
-3. 是否有 `[REVIEW]` Issue 与关联 PR。
-4. PR 是否存在未解决 Review 意见。
-5. 当前 Epic 的剩余验收项。
-6. 下一任务是否依赖尚未合并的代码。
-7. 是否涉及敏感数据泄漏风险。
-
-只有当前任务完成后才创建下一 `[READY]`。
-
-## Codex 工作入口
-
-Linux / macOS / WSL：
-
-```bash
-./scripts/codex-next.sh
-```
-
-Windows PowerShell 7+：
-
-```powershell
-pwsh -File .\scripts\codex-next.ps1
-```
-
-Windows 当前是正式支持的“任务领取环境”。Provider 仍可继续使用 Bash 实现；真实 Provider 端到端执行可使用 Git Bash 或 WSL。不要把“CLI 入口跨平台”和“所有 Provider 都必须原生 PowerShell”混成一锅。
-
-两个 task picker 都只负责找到下一任务，不负责自动改 Issue 状态或自动执行 Codex。
-
-Codex 读取到任务后必须遵守根目录 `AGENTS.md`。
-
-## Windows 推荐环境
-
-建议：
-
-```text
-PowerShell 7+
-Git for Windows
-gh CLI
-Ruby 3.x
-Git Bash 或 WSL（用于 Bash Provider）
-```
-
-确认：
-
-```powershell
-pwsh --version
-git --version
-gh --version
-ruby --version
-```
-
-首次使用 GitHub CLI：
-
-```powershell
-gh auth login
-```
-
-## PR 要求
-
-PR 标题建议：
-
-```text
-[V0.1-T01] add offline end-to-end build test
+codex/batch-v0.1 -> main
 ```
 
 PR Body 至少包含：
 
 ```markdown
-Refs #5
+Refs #<START_ISSUE>
+Refs #<相关 Epic / Task>
 
-## 变更
+## 批次完成内容
 - ...
 
 ## 测试
-- `ruby ...` ✅
-- `./bin/mpk doctor` ✅
+- ... ✅
 
-## 风险 / 未完成
+## 未完成 / 人工验收
 - ...
 ```
 
-不要在 PR、Issue、Actions 日志中输出真实订阅 URL 或节点凭据。
+不要为 Batch 中每一步再开 PR。
 
-## Review 规则
+## Windows 主开发环境
 
-Sol Review 重点不只看“能不能跑”，还检查：
+当前主要开发环境：
 
-- 是否破坏 Provider 边界
-- 是否把 Smart-Config-Kit 专有逻辑泄漏进通用层
-- 是否影响逻辑 target 抽象
-- 是否可能把 proxies 清空
-- 是否破坏 rule 优先级
-- 是否破坏节点级 `client-fingerprint`
-- 是否有隐私 / Token 泄漏
-- 是否有必要测试
-- 是否为了当前任务做了过度重构
+```text
+Windows
+PowerShell 7+
+Git for Windows
+gh CLI
+Ruby 3.x
+Git Bash 或 WSL2（用于 Bash Provider）
+```
+
+CI 至少应覆盖：
+
+- Linux：Ruby、Bash、Provider/构建相关测试
+- Windows：PowerShell 与 Windows 下的 Ruby 通用逻辑测试
+
+是否下载真实 Mihomo Core、是否执行联网集成测试，由具体 Batch Issue 决定，不默认把 Secret 放进 GitHub Actions。
+
+## Reviewer 统一检查项
+
+总 PR Review 时重点检查：
+
+- Scope 是否与启动 Issue 一致
+- Provider 边界是否仍然清晰
+- Smart-Config-Kit 是否仍为 Normal / 非 Smart
+- 自定义规则是否保持最高优先级
+- 逻辑 target 是否没有泄漏 Provider 专有命名
+- `global-client-fingerprint` 是否只删除顶层
+- 节点级 `client-fingerprint` 是否保留
+- `geodata-loader: memconservative` 是否稳定存在
+- proxies 节点保护是否有效
+- DNS upstream / china_compat 是否符合约定
+- Secret 是否可能进入日志、异常、Actions、PR、fixture
+- Windows 与 Linux 测试是否与实际支持范围一致
+- 是否出现当前 Batch 不需要的过度重构
 
 ## 失败处理
 
-如果 Codex 无法完成：
+如果普通测试失败，Codex自行修复并继续。
+
+只有真正阻塞才将启动 Issue改为：
 
 ```text
-[DOING] -> [BLOCKED]
+[BLOCKED]
 ```
 
-并在 Issue 评论中记录：
+并写明：
 
-- 卡在哪里
-- 已验证什么
-- 错误日志（脱敏）
-- 需要哪项决策
+- 阻塞点
+- 已验证内容
+- 脱敏错误
+- 需要的人工决策
 
-不要为了“把 Issue 做完”而偷偷改变验收标准。
+解决后继续原分支，不新开重复批次。
