@@ -202,8 +202,8 @@ class BuildHelpersTest < Minitest::Test
       if Gem.win_platform?
         assert_equal File.expand_path(fake), BuildHelpers.command_path('mihomo')
       else
-        # Unix 需要执行位
-        refute_nil BuildHelpers.command_path('mihomo')
+        # Unix 需要执行位：无执行位时找不到，设置后能找到
+        assert_nil BuildHelpers.command_path('mihomo')
         File.chmod(0o755, fake)
         assert_equal File.expand_path(fake), BuildHelpers.command_path('mihomo')
       end
