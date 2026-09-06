@@ -1,0 +1,87 @@
+# mihomo-policy-kit V0.1 真实订阅 Smoke Test（Windows + PowerShell 7）
+#
+# 用法：
+#   $env:MPK_SOURCE_URL='https://your-airport/...'
+#   pwsh -File scripts/smoke_test.ps1
+#
+# 行为：
+#   - 从环境变量读取真实订阅（日志/回显不打印真实 URL）
+#   - 分别执行 upstream 与 china_compat 两套构建
+#   - 输出 source / provider / final 的 proxies 数量
+#   - 存在 mihomo 时自动执行 `mihomo -t`
+#   - 产物写入 gitignored 的 dist/
+# 注意：不要在 GitHub Actions 中配置真实机场 Secret。
+
+$ErrorActionPreference = 'Stop'
+$Root = Split-Path -Parent $PSScriptRoot
+
+if (-not $env:MPK_SOURCE_URL) {
+    Write-Error '[smoke] MPK_SOURCE_URL is not set (real subscription smoke requires it)'
+    exit 2
+}
+
+if (-not (Get-Command ruby -ErrorAction SilentlyContinue)) {
+    Write-Error '[smoke] ruby not found'
+    exit 2
+}
+
+# Provider 需要 bash（Git Bash / WSL2）
+if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
+    Write-Error '[smoke] bash not found; provider requires Git Bash or WSL2'
+    exit 2
+}
+
+$configFile = Join-Path $Root 'config\config.yaml'
+if (-not (Test-Path $configFile)) {
+    Write-Error "[smoke] missing config: $configFile (copy config/config.example.yaml to config/config.yaml)"
+    exit 2
+}
+
+$ruby = (Get-Command ruby).Source
+$buildScript = Join-Path $Root 'scripts\build.rb'
+
+# 每个 profile 使用明确命名的产物，便于人工比对两套 DNS 行为。
+$profiles = @(
+    @{ name = 'upstream';     output = 'dist\mihomo.yaml' },
+    @{ name = 'china_compat'; output = 'dist\mihomo-china-compat.yaml' }
+)
+$failures = @()
+$artifacts = @()
+
+foreach ($profile in $profiles) {
+    $profileName = $profile.name
+    $outputPath = Join-Path $Root $profile.output
+    Write-Host ''
+    Write-Host "==== smoke: dns_profile=$profileName ===="
+    Write-Host '[smoke] building (subscription URL is read from MPK_SOURCE_URL, never printed)'
+    & $ruby $buildScript $configFile $profileName $outputPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[smoke] FAILED dns_profile=$profileName" -ForegroundColor Red
+        $failures += $profileName
+        continue
+    }
+    $artifacts += "$($profile.output)"
+    Write-Host "[smoke] OK dns_profile=$profileName -> $($profile.output)" -ForegroundColor Green
+}
+
+if ($failures.Count -gt 0) {
+    Write-Host ''
+    Write-Host "=== smoke FAILED for: $($failures -join ', ') ===" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host ''
+Write-Host '=== smoke summary (proxies counts are logged by scripts/build.rb above) ==='
+if ($artifacts.Count -gt 0) {
+    Write-Host ("=== artifacts written: " + ($artifacts -join ', ') + " ===")
+} else {
+    Write-Host '=== no artifacts written (all builds failed) ==='
+}
+
+# 提示 mihomo -t：由 write_and_test 在 mihomo 存在时自动执行
+if (Get-Command mihomo -ErrorAction SilentlyContinue) {
+    Write-Host '=== mihomo found: core validation ran during build above ==='
+} else {
+    Write-Host '=== mihomo not found: core validation skipped (install mihomo for -t check) ==='
+}
+Write-Host '=== smoke OK ==='

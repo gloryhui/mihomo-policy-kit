@@ -29,8 +29,13 @@ patches:
   # 删除机场订阅顶层 global-client-fingerprint，保留各节点自身 client-fingerprint。
   remove_global_client_fingerprint: true
 
+  # geodata-loader: memconservative（默认）/ standard / upstream
+  # upstream = 保留 Provider 的值（不设置本字段）。
+  geodata_loader: memconservative
+
   # upstream: 保留 Smart-Config-Kit 自带 DNS。
   # china_compat: 使用国内 bootstrap / DoH 兼容配置，适合部分 OpenWrt/Nikki 环境。
+  # 命令行可用第二参数覆盖：ruby scripts/build.rb config.yaml china_compat
   dns_profile: upstream
 
 validation:

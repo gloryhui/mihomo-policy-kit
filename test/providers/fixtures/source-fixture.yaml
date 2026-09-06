@@ -1,0 +1,39 @@
+global-client-fingerprint: chrome
+proxies:
+  - name: Fixture-US-01
+    type: ss
+    server: 127.0.0.1
+    port: 8443
+    cipher: aes-128-gcm
+    password: fake-password
+    client-fingerprint: chrome
+  - name: Fixture-JP-01
+    type: ss
+    server: 127.0.0.2
+    port: 8443
+    cipher: aes-128-gcm
+    password: fake-password
+  - name: Fixture-HK-01
+    type: vmess
+    server: 127.0.0.3
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000000
+    alterId: 0
+    cipher: auto
+    client-fingerprint: safari
+proxy-groups:
+  - name: "🌍 全球节点"
+    type: select
+    proxies:
+      - Fixture-US-01
+      - Fixture-JP-01
+      - Fixture-HK-01
+rules:
+  - MATCH,"🌍 全球节点"
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+  nameserver:
+    - https://dns.google/dns-query
+  fallback:
+    - https://8.8.8.8/dns-query

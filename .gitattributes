@@ -1,0 +1,18 @@
+# 统一行尾：源码 / 文档 / 配置使用 LF
+* text=auto
+
+*.sh  text eol=lf
+*.rb  text eol=lf
+*.pl  text eol=lf
+*.py  text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md  text eol=lf
+*.list text eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 生成产物 / 上游脚本不参与行尾规范化
+vendor/** -text
+dist/** -text

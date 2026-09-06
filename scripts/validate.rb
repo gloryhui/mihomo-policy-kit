@@ -5,6 +5,7 @@ require 'open3'
 ROOT_DIR = File.expand_path('..', __dir__)
 $LOAD_PATH.unshift(File.join(ROOT_DIR, 'lib'))
 require 'overlay'
+require 'build_helpers'
 
 path = ARGV[0]
 if path.nil? || path.strip.empty?
@@ -28,8 +29,8 @@ begin
 
   puts "[validate] YAML OK: proxies=#{proxies} proxy-providers=#{providers} proxy-groups=#{groups} rules=#{rules}"
 
-  if system('sh', '-c', 'command -v mihomo >/dev/null 2>&1')
-    stdout, stderr, status = Open3.capture3('mihomo', '-t', '-f', path)
+  if (mihomo = BuildHelpers.command_path('mihomo'))
+    stdout, stderr, status = Open3.capture3(mihomo, '-t', '-f', path)
     $stdout.write(stdout) unless stdout.empty?
     $stderr.write(stderr) unless stderr.empty?
     raise MPK::Error, "mihomo config test failed (#{status.exitstatus})" unless status.success?

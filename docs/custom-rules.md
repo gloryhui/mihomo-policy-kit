@@ -142,3 +142,12 @@ rules/private-*.list
 ```
 
 这样仓库可以公开，实际部署规则仍然保持私有。
+## 8. 与公共补丁的配合
+
+自定义规则只是 Overlay 的一部分。构建时还会自动应用：
+
+- 删除顶层 `global-client-fingerprint`（保留节点级指纹）
+- 设置 `geodata-loader: memconservative`
+- 按 `patches.dns_profile` 应用 upstream / china_compat DNS
+
+详见 `docs/architecture.md`。

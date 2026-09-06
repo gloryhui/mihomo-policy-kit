@@ -5,79 +5,12 @@ require 'fileutils'
 require 'tmpdir'
 require 'tempfile'
 require 'open3'
+require 'shellwords'
 
 ROOT_DIR = File.expand_path('..', __dir__)
 $LOAD_PATH.unshift(File.join(ROOT_DIR, 'lib'))
 require 'overlay'
-
-module BuildHelpers
-  module_function
-
-  def absolute(path)
-    File.expand_path(path.to_s, ROOT_DIR)
-  end
-
-  def load_config(path)
-    MPK::YAMLUtil.load_file(path)
-  end
-
-  def dig(hash, *keys, default: nil)
-    current = hash
-    keys.each do |key|
-      return default unless current.is_a?(Hash) && current.key?(key)
-
-      current = current[key]
-    end
-    current.nil? ? default : current
-  end
-
-  def run_streaming(env, *command)
-    puts "[exec] #{command.join(' ')}"
-    status = nil
-
-    Open3.popen2e(env, *command) do |_stdin, output, wait_thread|
-      output.each { |line| $stdout.write(line) }
-      status = wait_thread.value
-    end
-
-    raise MPK::Error, "command failed (#{status.exitstatus}): #{command.join(' ')}" unless status.success?
-  end
-
-  def fetch_to(url, path)
-    FileUtils.mkdir_p(File.dirname(path))
-    run_streaming(
-      {},
-      'curl', '-fL', '--connect-timeout', '15', '--retry', '3', '--retry-delay', '2',
-      url, '-o', path
-    )
-  end
-
-  def command_available?(command)
-    system('sh', '-c', "command -v #{command} >/dev/null 2>&1")
-  end
-
-  def write_and_test(document, output_path)
-    FileUtils.mkdir_p(File.dirname(output_path))
-
-    Tempfile.create(['mpk-candidate-', '.yaml'], File.dirname(output_path)) do |tmp|
-      tmp.write(YAML.dump(document))
-      tmp.flush
-      tmp.fsync
-
-      if command_available?('mihomo')
-        puts '[validate] running mihomo -t'
-        stdout, stderr, status = Open3.capture3('mihomo', '-t', '-f', tmp.path)
-        $stdout.write(stdout) unless stdout.empty?
-        $stderr.write(stderr) unless stderr.empty?
-        raise MPK::Error, "mihomo config test failed (#{status.exitstatus})" unless status.success?
-      else
-        puts '[validate] mihomo not found; core validation skipped'
-      end
-
-      FileUtils.mv(tmp.path, output_path)
-    end
-  end
-end
+require 'build_helpers'
 
 begin
   config_path = ARGV[0] || File.join(ROOT_DIR, 'config', 'config.yaml')
@@ -88,6 +21,22 @@ begin
   end
 
   config = BuildHelpers.load_config(config_path)
+
+  # 可选第二参数覆盖 DNS Profile（upstream / china_compat），供 smoke 测试
+  # 一条命令分别验证两套 DNS 行为，不必维护两份 config。
+  dns_override = ARGV[1].to_s
+  unless dns_override.empty?
+    config['patches'] = {} unless config['patches'].is_a?(Hash)
+    config['patches']['dns_profile'] = dns_override
+  end
+
+  # 可选第三参数覆盖输出路径（供 smoke 测试保留多份明确命名产物）。
+  output_override = ARGV[2].to_s
+  unless output_override.empty?
+    config['output'] = {} unless config['output'].is_a?(Hash)
+    config['output']['mihomo'] = output_override
+  end
+
   provider_name = config['provider'].to_s
   raise MPK::Error, "unsupported provider: #{provider_name}" unless provider_name == 'smart-config-kit'
 
@@ -111,7 +60,7 @@ begin
       raise MPK::Error, "environment variable #{env_name} is empty" if source_url.empty?
 
       puts "[source] download subscription from #{env_name}"
-      BuildHelpers.fetch_to(source_url, working_yaml)
+      BuildHelpers.fetch_to(source_url, working_yaml, log: "$#{env_name}")
     end
 
     source_document = MPK::YAMLUtil.load_file(working_yaml)
@@ -133,13 +82,18 @@ begin
       default: 'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/OpenClash/OpenClash%28mihomo%29.sh'
     ).to_s
 
-    BuildHelpers.run_streaming(
-      {
-        'MPK_PROVIDER_LOCAL' => provider_local,
-        'MPK_PROVIDER_REMOTE' => provider_remote
-      },
-      'bash', provider_script, working_yaml
-    )
+    # Windows 下把脚本与目标文件路径转为 Git Bash 可解析的 POSIX 形式，
+    # 避免 "F:\..." / "C:\..." 路径在 bash 中解析失败（Issue #7-05）。
+    bash_provider_script = BuildHelpers.bash_path_for(provider_script)
+    bash_working_yaml = BuildHelpers.bash_path_for(working_yaml)
+    bash_provider_local = BuildHelpers.bash_path_for(provider_local)
+
+    # Open3 的 env 参数在 Windows -> WSL bash 场景下不可靠，因此改用
+    # bash -c 内联环境赋值，确保 provider 能拿到本地 upstream 路径。
+    provider_command = "MPK_PROVIDER_LOCAL=#{Shellwords.escape(bash_provider_local)} " \
+                       "MPK_PROVIDER_REMOTE=#{Shellwords.escape(provider_remote)} " \
+                       "bash #{Shellwords.escape(bash_provider_script)} #{Shellwords.escape(bash_working_yaml)}"
+    BuildHelpers.run_streaming({}, 'bash', '-c', provider_command)
 
     transformed = MPK::YAMLUtil.load_file(working_yaml)
     after_provider_proxy_count = Array(transformed['proxies']).length

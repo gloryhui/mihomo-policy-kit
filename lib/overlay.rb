@@ -122,6 +122,16 @@ module MPK
         document.delete('global-client-fingerprint')
       end
 
+      geodata_loader = dig(config, 'patches', 'geodata_loader', default: 'memconservative').to_s
+      if geodata_loader.empty? || geodata_loader == 'upstream'
+        # upstream：完全保留 Provider 生成的值，不做任何修改（no-op preserve）
+        nil
+      elsif %w[memconservative standard].include?(geodata_loader)
+        document['geodata-loader'] = geodata_loader
+      else
+        raise Error, "unknown geodata-loader: #{geodata_loader}"
+      end
+
       case dig(config, 'patches', 'dns_profile', default: 'upstream').to_s
       when '', 'upstream'
         nil
