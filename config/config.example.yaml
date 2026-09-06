@@ -1,0 +1,48 @@
+version: 1
+
+provider: smart-config-kit
+
+source:
+  # 推荐把真实机场订阅放进环境变量，避免泄漏到 Git。
+  url_env: MPK_SOURCE_URL
+  # 也可以直接指定本地 YAML。非空时优先于 url_env。
+  file: null
+
+provider_options:
+  smart_config_kit:
+    # 本地存在时优先使用；不存在才回退到 remote_url。
+    local_script: ./vendor/OpenClash(mihomo).sh
+    remote_url: https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/OpenClash/OpenClash%28mihomo%29.sh
+    # 当前项目只支持 Normal / 非 Smart 版本。
+    forbid_smart: true
+
+custom_rules:
+  files:
+    - ./rules/custom.list
+  # true = 文件不存在时只警告；false = 文件不存在直接失败。
+  allow_missing: true
+
+groups:
+  map_file: ./config/groups.smart-config-kit.yaml
+
+patches:
+  # 删除机场订阅顶层 global-client-fingerprint，保留各节点自身 client-fingerprint。
+  remove_global_client_fingerprint: true
+
+  # upstream: 保留 Smart-Config-Kit 自带 DNS。
+  # china_compat: 使用国内 bootstrap / DoH 兼容配置，适合部分 OpenWrt/Nikki 环境。
+  dns_profile: upstream
+
+validation:
+  min_proxy_count: 1
+  require_proxy_groups: true
+  require_rules: true
+  # 这些逻辑目标必须能映射到最终实际策略组，并且该策略组必须存在。
+  require_targets:
+    - ai
+    - global
+    - us
+    - direct
+
+output:
+  mihomo: ./dist/mihomo.yaml
