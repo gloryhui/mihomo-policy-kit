@@ -54,7 +54,7 @@ echo "[provider:smart-config-kit] $VERSION_LINE"
 # Smart-Config-Kit 的 OpenClash 入口仅有一个 OpenClash 日志依赖。
 # 在中央构建机上替换为兼容 LOG_OUT，保持上游转换逻辑本身不变。
 awk '
-  NR == 2 && $0 ~ /\/usr\/share\/openclash\/log\.sh/ {
+  $0 ~ /\/usr\/share\/openclash\/log\.sh/ {
     print "LOG_OUT() { local level=\"$1\"; shift || true; printf \"[SCKI][%s] %s\\n\" \"$level\" \"$*\" >&2; }"
     next
   }

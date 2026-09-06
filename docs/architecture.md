@@ -68,14 +68,31 @@ providers/smart-config-kit/provider.sh
     ↓
 确认 VERSION_TAG 为 oc-normal
     ↓
-替换 OpenClash LOG_OUT 依赖
+替换 OpenClash LOG_OUT 依赖（任意行位置均可兼容）
     ↓
 执行官方转换
 ```
 
 输出仍然写回输入 YAML。
 
+**限制**：v0.1 只允许 `oc-normal`（Normal / 非 Smart）版本；`mihomo-smart` 与
+LightGBM 版本会在 `VERSION_TAG` 校验阶段被拒绝。
+
 未来 Provider 只要满足相同契约，就可以接入主构建流程。
+
+## 3.1 Windows 执行
+
+Provider 是 Bash 脚本，Windows 上需要 Git Bash 或 WSL2 提供 `bash`。
+
+Ruby 构建层在 Windows 上调用 Bash 时：
+
+- 会把 Windows 路径（`F:\...` / `C:/...`）转换为当前 Bash 可解析的 POSIX 路径
+  （优先 `wslpath`，其次 `cygpath`；两者都不可用则原样返回并给出明确错误）
+- 通过 `bash -c` 内联环境变量传递本地上游路径，避免跨进程 env 传递在
+  Windows -> WSL 场景下丢失
+- Bash 完全缺失时，Provider 阶段应给出明确错误，而不是难懂的堆栈
+
+不要把 Bash Provider 改写成 PowerShell。
 
 ## 4. 逻辑策略目标
 
@@ -127,6 +144,9 @@ MATCH / Final
 
 Mihomo 使用首条命中规则，因此用户规则拥有最高优先级。
 
+自定义规则中的逻辑 target 必须能映射到真实策略组或 Mihomo 内建动作，
+否则构建失败（`unknown logical target` / `required target missing`）。
+
 ## 6. 节点保护
 
 构建器会记录原始订阅节点数量。
@@ -147,7 +167,21 @@ proxies == 0
 
 这用于防止 YAML 工具差异、上游变化或转换异常导致整份节点池被清空。
 
-## 7. DNS Profile
+## 7. 公共补丁
+
+### 7.1 client-fingerprint
+
+- 删除顶层 `global-client-fingerprint`（可配置关闭）
+- **保留**每个节点自身的 `client-fingerprint`
+- 禁止粗暴递归删除整个文档的 fingerprint 字段
+
+### 7.2 geodata-loader
+
+默认设置 `geodata-loader: memconservative`，降低低内存设备加载 GeoIP 数据时的
+内存开销。可在 `config/config.yaml` 的 `patches.geodata_loader` 中改为
+`standard` 或 `upstream`（`upstream` 表示完全保留 Provider 的值）。
+
+## 8. DNS Profile
 
 v0.1 提供两种模式。
 
@@ -159,15 +193,32 @@ v0.1 提供两种模式。
 
 ### china_compat
 
-将 resolver bootstrap 改为国内 IP / DoH，主要用于某些 OpenWrt / Nikki 环境里境外 DoH 出现 bootstrap 死锁的情况。
+将 resolver bootstrap 改为国内 IP / DoH（223.5.5.5 / 119.29.29.29 / 120.53.53.53），
+并删除 `nameserver-policy` 中以下境外 bootstrap 特例（存在才删）：
 
-该模式只作为显式 Overlay，不应该偷偷修改所有构建结果。
+- `geosite:geolocation-!cn`
+- `+.jsdelivr.net`
+- `+.github.com`
+- `+.githubusercontent.com`
+- `+.githubassets.com`
+- `+.fastly.net`
 
-## 8. 输出与发布
+主要用于某些 OpenWrt / Nikki 环境里境外 DoH 出现 bootstrap 死锁的情况。
+
+该模式只作为显式 Overlay，不应该偷偷修改所有构建结果；其他与 DNS 无关的字段
+（例如 `enhanced-mode`、未列入删除名单的 policy）会被保留。
+
+## 9. 输出与发布
 
 `dist/` 永远视为敏感产物目录，不提交 Git。
 
-后续发布器计划采用：
+v0.1 只输出：
+
+```text
+dist/mihomo.yaml
+```
+
+V0.2（**尚未实现**）计划采用：
 
 ```text
 builds/<build-id>/mihomo.yaml
@@ -182,3 +233,16 @@ previous -> builds/<previous-build-id>
 ```
 
 只有新构建完整通过校验后才切换 `current`。
+
+## 10. 安全
+
+- 真实订阅 URL 只通过 `MPK_SOURCE_URL` 环境变量注入
+- 构建日志与异常消息不打印真实 URL / Token
+- 公开仓库不提交 `dist/`、`vendor/` 上游脚本、`config/config.yaml`、`rules/custom.list`
+
+## 11. 测试策略
+
+- Ruby 单元测试：`test/test_overlay.rb`、`test/test_build_helpers.rb`
+- Provider wrapper 离线测试：`test/providers/test_smart_config_kit.sh`（fake upstream，不出网）
+- 离线端到端：`test/test_e2e_offline.rb`（fixture -> provider -> overlay -> validate -> output）
+- 真实订阅 smoke：`scripts/smoke_test.ps1`（人工执行，不进入 CI）

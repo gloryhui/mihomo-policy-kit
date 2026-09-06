@@ -5,6 +5,7 @@ require 'fileutils'
 require 'tmpdir'
 require 'tempfile'
 require 'open3'
+require 'shellwords'
 
 ROOT_DIR = File.expand_path('..', __dir__)
 $LOAD_PATH.unshift(File.join(ROOT_DIR, 'lib'))
@@ -20,6 +21,15 @@ begin
   end
 
   config = BuildHelpers.load_config(config_path)
+
+  # 可选第二参数覆盖 DNS Profile（upstream / china_compat），供 smoke 测试
+  # 一条命令分别验证两套 DNS 行为，不必维护两份 config。
+  dns_override = ARGV[1].to_s
+  unless dns_override.empty?
+    config['patches'] = {} unless config['patches'].is_a?(Hash)
+    config['patches']['dns_profile'] = dns_override
+  end
+
   provider_name = config['provider'].to_s
   raise MPK::Error, "unsupported provider: #{provider_name}" unless provider_name == 'smart-config-kit'
 
@@ -65,13 +75,18 @@ begin
       default: 'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/OpenClash/OpenClash%28mihomo%29.sh'
     ).to_s
 
-    BuildHelpers.run_streaming(
-      {
-        'MPK_PROVIDER_LOCAL' => provider_local,
-        'MPK_PROVIDER_REMOTE' => provider_remote
-      },
-      'bash', provider_script, working_yaml
-    )
+    # Windows 下把脚本与目标文件路径转为 Git Bash 可解析的 POSIX 形式，
+    # 避免 "F:\..." / "C:\..." 路径在 bash 中解析失败（Issue #7-05）。
+    bash_provider_script = BuildHelpers.bash_path_for(provider_script)
+    bash_working_yaml = BuildHelpers.bash_path_for(working_yaml)
+    bash_provider_local = BuildHelpers.bash_path_for(provider_local)
+
+    # Open3 的 env 参数在 Windows -> WSL bash 场景下不可靠，因此改用
+    # bash -c 内联环境赋值，确保 provider 能拿到本地 upstream 路径。
+    provider_command = "MPK_PROVIDER_LOCAL=#{Shellwords.escape(bash_provider_local)} " \
+                       "MPK_PROVIDER_REMOTE=#{Shellwords.escape(provider_remote)} " \
+                       "bash #{Shellwords.escape(bash_provider_script)} #{Shellwords.escape(bash_working_yaml)}"
+    BuildHelpers.run_streaming({}, 'bash', '-c', provider_command)
 
     transformed = MPK::YAMLUtil.load_file(working_yaml)
     after_provider_proxy_count = Array(transformed['proxies']).length

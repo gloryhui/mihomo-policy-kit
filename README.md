@@ -34,7 +34,7 @@ DNS / 公共补丁
       ↓
 dist/mihomo.yaml
       ↓
-HTTPS 私有订阅
+HTTPS 私有订阅（V0.2 规划，尚未实现）
       ↓
 Clash Party / Clash Verge / Nikki / Android Mihomo ...
 ```
@@ -72,12 +72,12 @@ mihomo-policy-kit 负责：
 ### 输入
 
 - 本地 Mihomo YAML
-- 远程机场订阅 URL
+- 远程机场订阅 URL（推荐通过 `MPK_SOURCE_URL` 环境变量注入）
 - 自定义 `.list` 规则文件
 
 ### 输出
 
-- `dist/mihomo.yaml`
+- `dist/mihomo.yaml`（仅 Mihomo YAML；V0.2 发布器尚未实现）
 
 ### 当前主要兼容客户端
 
@@ -88,39 +88,45 @@ mihomo-policy-kit 负责：
 
 只要客户端能直接消费标准 Mihomo YAML，就属于当前目标范围。
 
+## 开发环境
+
+主要开发环境为 **Windows + PowerShell 7**。Bash Provider（Smart-Config-Kit 转换脚本）
+需要 Bash 运行时，Windows 上请使用 Git Bash 或 WSL2。
+
+依赖：
+
+| 工具 | 用途 | 说明 |
+| --- | --- | --- |
+| Ruby 3.x | 构建 / Overlay / 测试 | 需要 `yaml`、`psych` |
+| Bash 4+ | Provider wrapper | Git Bash 或 WSL2 |
+| curl | 订阅下载 / 上游兜底下载 | Windows 10+ 自带 |
+| mihomo | 可选：配置测试 | 存在时自动执行 `mihomo -t` |
+
+> 注意：**Provider 仍然是 Bash 脚本**，不要为了“Windows 能跑”把它改写成 PowerShell。
+> CLI 入口（Ruby）跨平台，Provider 实现保持 Bash，这是两个不同的关注点。
+
 ## 快速开始
 
-### 1. 依赖
+### 1. 安装依赖
 
-Linux / macOS / WSL：
-
-```bash
-bash
-ruby
-curl
+```powershell
+pwsh --version   # PowerShell 7+
+ruby --version   # Ruby 3.x
+bash --version   # Git Bash / WSL2
 ```
-
-可选但强烈建议：
-
-```bash
-mihomo
-```
-
-如果存在 `mihomo`，构建结束会自动执行配置测试。
 
 ### 2. 准备配置
 
-```bash
-cp config/config.example.yaml config/config.yaml
-cp rules/custom.example.list rules/custom.list
+```powershell
+Copy-Item config/config.example.yaml config/config.yaml
 ```
 
 不要把机场真实订阅 URL 提交到公开仓库。
 
 推荐使用环境变量：
 
-```bash
-export MPK_SOURCE_URL='https://your-airport.example/subscription/token'
+```powershell
+$env:MPK_SOURCE_URL = 'https://your-airport.example/subscription/token'
 ```
 
 ### 3. 可选：提前下载 Smart-Config-Kit Normal 脚本
@@ -133,10 +139,19 @@ vendor/OpenClash(mihomo).sh
 
 如果本地不存在，构建器才会自动从官方仓库下载。
 
+> 只允许 **Normal / 非 Smart** 版本（`oc-normal`）。`VERSION_TAG` 不含 `oc-normal`
+> 的上游脚本会被拒绝，避免误用 Smart / LightGBM。
+
 ### 4. 构建
 
-```bash
-./bin/mpk build
+```powershell
+ruby scripts/build.rb config/config.yaml [upstream|china_compat]
+```
+
+或通过 CLI：
+
+```powershell
+bash bin/mpk build config/config.yaml [upstream|china_compat]
 ```
 
 生成：
@@ -145,10 +160,19 @@ vendor/OpenClash(mihomo).sh
 dist/mihomo.yaml
 ```
 
+构建日志会记录 `source proxies`、`provider 后 proxies`、`final proxies` 数量，
+并执行结构校验；若本机存在 `mihomo`，会自动运行 `mihomo -t -f dist/mihomo.yaml`。
+
 ### 5. 校验
 
-```bash
-./bin/mpk validate dist/mihomo.yaml
+```powershell
+ruby scripts/validate.rb dist/mihomo.yaml
+```
+
+### 6. 诊断
+
+```powershell
+bash bin/mpk doctor
 ```
 
 ## 自定义规则
@@ -196,24 +220,94 @@ reject -> REJECT
 
 以后接入其他分流项目时，只需要换映射，不需要重写你的规则。
 
+自定义规则会插入到最终 `rules` 的**最前面**，因此优先级最高；逻辑 target 映射后
+必须指向真实存在的策略组或 Mihomo 内建动作（`DIRECT` / `REJECT` / `REJECT-DROP` / `PASS`），
+否则构建失败。
+
+## 公共补丁
+
+构建时会自动应用以下公共补丁（可在 `config/config.yaml` 中关闭）：
+
+- 删除顶层 `global-client-fingerprint`（避免机场指纹覆盖客户端设置）
+- **保留**每个节点自身的 `client-fingerprint`（禁止粗暴递归删除）
+- 设置 `geodata-loader: memconservative`（降低低内存设备加载 GeoIP 数据的内存开销）
+
+### 两套 DNS Profile
+
+`config/config.yaml` 的 `patches.dns_profile`：
+
+| 值 | 行为 | 适用 |
+| --- | --- | --- |
+| `upstream`（默认） | **完全保留** Smart-Config-Kit 生成的 DNS，不做任何覆盖 | 通用桌面 / 手机 / 大部分 Mihomo 客户端 |
+| `china_compat` | 使用国内 bootstrap / DoH（223.5.5.5 / 119.29.29.29 等），删除境外 bootstrap 特例（jsdelivr / github / fastly 等） | 部分 OpenWrt / Nikki 中境外 DoH bootstrap 死锁的环境 |
+
+`china_compat` 是显式选择，不会偷偷修改所有构建结果。
+
 ## 安全
 
-**不要公开最终生成的 `dist/mihomo.yaml`。**
+**不要公开最终生成的 `dist/mihomo.yaml`。** 它可能包含节点服务器地址、UUID / 密码、
+Reality 参数等机场专属信息。
 
-它可能包含：
+### Secret 注入
 
-- 节点服务器地址
-- UUID / 密码
-- Reality 参数
-- 机场专属信息
+- 真实订阅 URL 通过环境变量 `MPK_SOURCE_URL` 注入（build.rb 从该变量读取）
+- 构建日志中 URL 一律显示为 `$MPK_SOURCE_URL` 占位符，**绝不打印真实值**
+- 下载失败异常也不包含真实 URL / Token
+- 真实输出位于 gitignored 的 `dist/`
 
-推荐最终通过自建 HTTPS 服务 + 高熵 Token URL 发布，例如：
+### 禁止提交
 
-```text
-https://sub.example.com/sub/<random-token>/mihomo.yaml
+- 真实机场订阅 URL / Token
+- 节点 UUID、密码、私钥
+- 生成后的 `dist/mihomo.yaml`
+- 私有 HTTPS 发布 Token
+
+### 本地真实订阅 Smoke Test
+
+```powershell
+$env:MPK_SOURCE_URL = 'https://your-airport.example/subscription/token'
+pwsh -File scripts/smoke_test.ps1
 ```
 
-GitHub 公共仓库只放编译器、示例配置和规则模板，不放真实机场订阅与生成结果。
+脚本会：
+- 从 `MPK_SOURCE_URL` 读取真实订阅（日志不打印 URL）
+- 分别执行 `upstream` 与 `china_compat` 两套构建
+- 记录 source / provider / final 的 proxies 数量
+- 本机有 `mihomo` 时执行 `mihomo -t`
+- 产物写入 gitignored 的 `dist/`
+
+> 不要在 GitHub Actions 中配置真实机场 Secret。
+
+## Provider 可靠性
+
+`providers/smart-config-kit/provider.sh` 是 Provider wrapper，行为：
+
+1. 优先使用本地 `vendor/OpenClash(mihomo).sh`，不存在才从官方仓库下载
+2. 校验 `VERSION_TAG` 必须包含 `oc-normal`，否则拒绝执行
+3. 兼容上游对 `/usr/share/openclash/log.sh` 的运行时依赖（替换为内置 `LOG_OUT`）
+4. Provider 执行失败时构建失败，不会误报成功
+5. 转换后节点数量为 0 且源节点 > 0 时，构建失败（节点保护）
+
+测试见 `test/providers/test_smart_config_kit.sh`（离线 fixture，不依赖真实机场与网络）。
+
+## 测试
+
+```powershell
+# Ruby 单元测试（Overlay / BuildHelpers）
+ruby test/test_overlay.rb
+ruby test/test_build_helpers.rb
+
+# Provider wrapper 离线测试（需要 bash）
+bash test/providers/test_smart_config_kit.sh
+
+# 离线端到端构建测试（需要 bash，使用 fixture 不走网络）
+ruby test/test_e2e_offline.rb
+```
+
+CI（`.github/workflows/ci.yml`）包含：
+
+- **Linux**：Ruby 语法 + 单元测试、Bash 语法、Provider fixture 测试、离线 E2E、doctor
+- **Windows**：PowerShell 语法 + task-picker 回归、Ruby 通用逻辑测试
 
 ## 项目结构
 
@@ -228,6 +322,7 @@ mihomo-policy-kit/
 │   ├── architecture.md
 │   └── custom-rules.md
 ├── lib/
+│   ├── build_helpers.rb
 │   └── overlay.rb
 ├── providers/
 │   └── smart-config-kit/
@@ -236,7 +331,17 @@ mihomo-policy-kit/
 │   └── custom.example.list
 ├── scripts/
 │   ├── build.rb
-│   └── validate.rb
+│   ├── validate.rb
+│   ├── smoke_test.ps1
+│   ├── codex-next.ps1
+│   └── codex-next.sh
+├── test/
+│   ├── test_overlay.rb
+│   ├── test_build_helpers.rb
+│   ├── test_e2e_offline.rb
+│   └── providers/
+│       ├── test_smart_config_kit.sh
+│       └── fixtures/
 ├── vendor/
 │   └── .gitkeep
 └── dist/
@@ -251,19 +356,25 @@ mihomo-policy-kit/
 - [x] 本地 Provider 脚本优先，GitHub 下载兜底
 - [x] 自定义规则 Overlay
 - [x] 逻辑策略组映射
-- [x] 删除顶层 `global-client-fingerprint`
+- [x] 删除顶层 `global-client-fingerprint`，保留节点级 fingerprint
+- [x] `geodata-loader: memconservative`
+- [x] 两套 DNS Profile（upstream / china_compat）
 - [x] 节点数量保护
 - [x] Mihomo 配置校验
-- [ ] 私有 HTTPS 发布器
-- [ ] 定时构建
+- [x] 离线端到端 fixture 测试
+- [x] Windows / Ruby 跨平台命令发现
+- [x] 真实订阅 smoke 入口
+- [ ] 私有 HTTPS 发布器（V0.2，**尚未实现**）
+- [ ] 定时构建（V0.2，**尚未实现**）
 
 ### v0.2
 
+- [ ] 私有 HTTPS 订阅发布器
 - [ ] 构建历史 / current / previous
 - [ ] 自动回滚
 - [ ] 多 Token 订阅发布
 - [ ] Provider 版本锁定
-- [ ] GitHub Actions / 自建 CI
+- [ ] GitHub Actions / 自建 CI 发布
 
 ### v0.3+
 
@@ -272,6 +383,8 @@ mihomo-policy-kit/
 - [ ] Stash 输出
 - [ ] Loon / Surge / Shadowrocket 输出
 - [ ] sing-box 输出
+
+> 注意：Stash / Loon / Surge / sing-box 等多客户端输出属于后续阶段（#4），v0.1 只输出 Mihomo YAML。
 
 ## License
 

@@ -122,6 +122,15 @@ module MPK
         document.delete('global-client-fingerprint')
       end
 
+      geodata_loader = dig(config, 'patches', 'geodata_loader', default: 'memconservative').to_s
+      if geodata_loader.empty? || geodata_loader == 'upstream'
+        document.delete('geodata-loader')
+      elsif %w[memconservative standard].include?(geodata_loader)
+        document['geodata-loader'] = geodata_loader
+      else
+        raise Error, "unknown geodata-loader: #{geodata_loader}"
+      end
+
       case dig(config, 'patches', 'dns_profile', default: 'upstream').to_s
       when '', 'upstream'
         nil
