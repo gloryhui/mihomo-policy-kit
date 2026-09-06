@@ -34,6 +34,21 @@ jobs:
           bash -n providers/smart-config-kit/provider.sh
           bash -n scripts/codex-next.sh
 
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            'scripts/codex-next.ps1',
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | Format-List
+            exit 1
+          }
+
       - name: Unit tests
         run: ruby test/test_overlay.rb
 
