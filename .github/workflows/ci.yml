@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Ruby syntax
+        run: |
+          ruby -c lib/overlay.rb
+          ruby -c scripts/build.rb
+          ruby -c scripts/validate.rb
+          ruby -c test/test_overlay.rb
+
+      - name: Shell syntax
+        run: |
+          bash -n bin/mpk
+          bash -n providers/smart-config-kit/provider.sh
+
+      - name: Unit tests
+        run: ruby test/test_overlay.rb
+
+      - name: Doctor
+        run: bash bin/mpk doctor
