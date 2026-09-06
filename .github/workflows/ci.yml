@@ -77,3 +77,42 @@ jobs:
             $errors | Format-List
             exit 1
           }
+
+      - name: Smoke test task picker with mocked gh
+        shell: pwsh
+        run: |
+          $mockDir = Join-Path $env:RUNNER_TEMP 'mpk-mock-gh'
+          New-Item -ItemType Directory -Path $mockDir -Force | Out-Null
+
+          @'
+          @echo off
+          if "%1 %2"=="auth status" exit /b 0
+          if "%1 %2"=="issue list" (
+            echo 5
+            exit /b 0
+          )
+          if "%1 %2 %3"=="issue view 5" (
+            echo %* | findstr /C:"--json title" >nul && (
+              echo [READY][V0.1-T01] test task
+              exit /b 0
+            )
+            echo %* | findstr /C:"--json url" >nul && (
+              echo https://github.com/gloryhui/mihomo-policy-kit/issues/5
+              exit /b 0
+            )
+          )
+          exit /b 1
+          '@ | Set-Content -Path (Join-Path $mockDir 'gh.cmd') -Encoding ascii
+
+          $env:PATH = "$mockDir;$env:PATH"
+          $output = & pwsh -NoProfile -File .\scripts\codex-next.ps1
+          if ($LASTEXITCODE -ne 0) {
+            $output | Write-Host
+            exit $LASTEXITCODE
+          }
+
+          $text = ($output | Out-String)
+          $text | Write-Host
+          if ($text -notmatch 'NEXT_ISSUE=5') { throw 'missing issue number' }
+          if ($text -notmatch 'TITLE=\[READY\]\[V0\.1-T01\] test task') { throw 'missing title' }
+          if ($text -notmatch 'issues/5') { throw 'missing URL' }
