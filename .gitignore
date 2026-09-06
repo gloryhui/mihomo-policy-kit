@@ -1,0 +1,25 @@
+# Local configuration / secrets
+config/config.yaml
+.env
+.env.*
+!.env.example
+
+# User rules
+rules/custom.list
+rules/private-*.list
+
+# Downloaded upstream provider artifacts
+vendor/*
+!vendor/.gitkeep
+
+# Generated subscriptions
+/dist/*
+!/dist/.gitkeep
+
+# Temporary / backup files
+*.tmp
+*.bak
+*.log
+.DS_Store
+.idea/
+.vscode/
