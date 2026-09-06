@@ -32,6 +32,7 @@ jobs:
         run: |
           bash -n bin/mpk
           bash -n providers/smart-config-kit/provider.sh
+          bash -n scripts/codex-next.sh
 
       - name: Unit tests
         run: ruby test/test_overlay.rb
