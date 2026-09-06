@@ -24,9 +24,11 @@ jobs:
       - name: Ruby syntax
         run: |
           ruby -c lib/overlay.rb
+          ruby -c lib/build_helpers.rb
           ruby -c scripts/build.rb
           ruby -c scripts/validate.rb
           ruby -c test/test_overlay.rb
+          ruby -c test/test_build_helpers.rb
 
       - name: Shell syntax
         run: |
@@ -50,7 +52,9 @@ jobs:
           }
 
       - name: Unit tests
-        run: ruby test/test_overlay.rb
+        run: |
+          ruby test/test_overlay.rb
+          ruby test/test_build_helpers.rb
 
       - name: Doctor
         run: bash bin/mpk doctor

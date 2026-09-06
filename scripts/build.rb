@@ -9,75 +9,7 @@ require 'open3'
 ROOT_DIR = File.expand_path('..', __dir__)
 $LOAD_PATH.unshift(File.join(ROOT_DIR, 'lib'))
 require 'overlay'
-
-module BuildHelpers
-  module_function
-
-  def absolute(path)
-    File.expand_path(path.to_s, ROOT_DIR)
-  end
-
-  def load_config(path)
-    MPK::YAMLUtil.load_file(path)
-  end
-
-  def dig(hash, *keys, default: nil)
-    current = hash
-    keys.each do |key|
-      return default unless current.is_a?(Hash) && current.key?(key)
-
-      current = current[key]
-    end
-    current.nil? ? default : current
-  end
-
-  def run_streaming(env, *command)
-    puts "[exec] #{command.join(' ')}"
-    status = nil
-
-    Open3.popen2e(env, *command) do |_stdin, output, wait_thread|
-      output.each { |line| $stdout.write(line) }
-      status = wait_thread.value
-    end
-
-    raise MPK::Error, "command failed (#{status.exitstatus}): #{command.join(' ')}" unless status.success?
-  end
-
-  def fetch_to(url, path)
-    FileUtils.mkdir_p(File.dirname(path))
-    run_streaming(
-      {},
-      'curl', '-fL', '--connect-timeout', '15', '--retry', '3', '--retry-delay', '2',
-      url, '-o', path
-    )
-  end
-
-  def command_available?(command)
-    system('sh', '-c', "command -v #{command} >/dev/null 2>&1")
-  end
-
-  def write_and_test(document, output_path)
-    FileUtils.mkdir_p(File.dirname(output_path))
-
-    Tempfile.create(['mpk-candidate-', '.yaml'], File.dirname(output_path)) do |tmp|
-      tmp.write(YAML.dump(document))
-      tmp.flush
-      tmp.fsync
-
-      if command_available?('mihomo')
-        puts '[validate] running mihomo -t'
-        stdout, stderr, status = Open3.capture3('mihomo', '-t', '-f', tmp.path)
-        $stdout.write(stdout) unless stdout.empty?
-        $stderr.write(stderr) unless stderr.empty?
-        raise MPK::Error, "mihomo config test failed (#{status.exitstatus})" unless status.success?
-      else
-        puts '[validate] mihomo not found; core validation skipped'
-      end
-
-      FileUtils.mv(tmp.path, output_path)
-    end
-  end
-end
+require 'build_helpers'
 
 begin
   config_path = ARGV[0] || File.join(ROOT_DIR, 'config', 'config.yaml')
@@ -111,7 +43,7 @@ begin
       raise MPK::Error, "environment variable #{env_name} is empty" if source_url.empty?
 
       puts "[source] download subscription from #{env_name}"
-      BuildHelpers.fetch_to(source_url, working_yaml)
+      BuildHelpers.fetch_to(source_url, working_yaml, log: "$#{env_name}")
     end
 
     source_document = MPK::YAMLUtil.load_file(working_yaml)
