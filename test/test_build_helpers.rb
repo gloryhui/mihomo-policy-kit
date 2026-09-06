@@ -197,15 +197,20 @@ class BuildHelpersTest < Minitest::Test
 
   def test_command_path_finds_mihomo_exe_on_windows
     with_path_dir do |dir|
-      fake = File.join(dir, 'mihomo.exe')
+      fake_name = Gem.win_platform? ? 'mihomo.exe' : 'mihomo'
+      fake = File.join(dir, fake_name)
       File.write(fake, 'fake')
+
       if Gem.win_platform?
+        # Windows：PATHEXT 的 .EXE 命中 mihomo.exe
         assert_equal File.expand_path(fake), BuildHelpers.command_path('mihomo')
+        assert BuildHelpers.command_available?('mihomo')
       else
-        # Unix 需要执行位：无执行位时找不到，设置后能找到
+        # Unix：需要执行位，且二进制无 .exe 后缀
         assert_nil BuildHelpers.command_path('mihomo')
         File.chmod(0o755, fake)
         assert_equal File.expand_path(fake), BuildHelpers.command_path('mihomo')
+        assert BuildHelpers.command_available?('mihomo')
       end
     end
   end
