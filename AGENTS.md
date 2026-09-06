@@ -23,18 +23,32 @@
 任务 Issue 标题必须使用以下状态之一：
 
 ```text
-[READY]  -> 可领取
-[DOING]  -> Codex 正在执行
-[REVIEW] -> 已提交 PR，等待 Sol 审查
+[READY]   -> 可领取
+[DOING]   -> Codex 正在执行
+[REVIEW]  -> 已提交 PR，等待 Sol 审查
 [BLOCKED] -> 存在阻塞，需要人工/架构决策
-[DONE]   -> 已完成并合并
+[DONE]    -> 已完成并合并
 ```
 
 Epic / Roadmap Issue（例如 V0.1、V0.2）不要求使用上述前缀；实际开发必须拆成可独立验收的 Task Issue。
 
 ## Codex 领取任务
 
-每次只领取 **一个** 最早的 `[READY]` Issue：
+每次只领取 **一个** 最早的 `[READY]` Issue。
+
+Linux / macOS / WSL：
+
+```bash
+./scripts/codex-next.sh
+```
+
+Windows PowerShell 7+：
+
+```powershell
+pwsh -File .\scripts\codex-next.ps1
+```
+
+也可以直接用 GitHub CLI 查询：
 
 ```bash
 gh issue list \
@@ -45,10 +59,15 @@ gh issue list \
   --json number,title,url,createdAt
 ```
 
-也可以运行：
+PowerShell 等价命令：
 
-```bash
-./scripts/codex-next.sh
+```powershell
+gh issue list `
+  --repo gloryhui/mihomo-policy-kit `
+  --state open `
+  --search '"[READY]" in:title' `
+  --limit 20 `
+  --json number,title,url,createdAt
 ```
 
 如果没有 `[READY]` Issue：**停止，不要自行找活。**
@@ -76,6 +95,16 @@ codex/issue-<number>-<short-name>
    - 风险/未解决问题
 9. 将 Issue 标题从 `[DOING]` 改为 `[REVIEW]`。
 10. 停止。不要领取下一个任务，不要自行合并 PR。
+
+## Windows 开发约定
+
+当前主要开发环境之一是 Windows + PowerShell 7。
+
+- 任务领取优先使用 `scripts/codex-next.ps1`。
+- Git 操作、`gh`、Ruby 测试应能在 PowerShell 中直接执行。
+- Provider 本身仍是 Bash 脚本；涉及真实 Provider 端到端执行时，可使用 Git Bash 或 WSL，除非目标 Issue 明确要求增加原生 Windows 执行适配。
+- 不要为了“Windows 能跑”擅自把现有 Bash Provider 改写为 PowerShell；跨平台入口与 Provider 实现是两个不同问题。
+- 路径处理新增代码必须考虑 Windows 路径分隔符和带空格目录。
 
 ## Review 后返工
 
