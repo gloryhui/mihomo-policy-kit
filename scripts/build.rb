@@ -30,6 +30,13 @@ begin
     config['patches']['dns_profile'] = dns_override
   end
 
+  # 可选第三参数覆盖输出路径（供 smoke 测试保留多份明确命名产物）。
+  output_override = ARGV[2].to_s
+  unless output_override.empty?
+    config['output'] = {} unless config['output'].is_a?(Hash)
+    config['output']['mihomo'] = output_override
+  end
+
   provider_name = config['provider'].to_s
   raise MPK::Error, "unsupported provider: #{provider_name}" unless provider_name == 'smart-config-kit'
 

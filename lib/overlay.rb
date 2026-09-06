@@ -124,7 +124,8 @@ module MPK
 
       geodata_loader = dig(config, 'patches', 'geodata_loader', default: 'memconservative').to_s
       if geodata_loader.empty? || geodata_loader == 'upstream'
-        document.delete('geodata-loader')
+        # upstream：完全保留 Provider 生成的值，不做任何修改（no-op preserve）
+        nil
       elsif %w[memconservative standard].include?(geodata_loader)
         document['geodata-loader'] = geodata_loader
       else

@@ -271,7 +271,9 @@ pwsh -File scripts/smoke_test.ps1
 
 脚本会：
 - 从 `MPK_SOURCE_URL` 读取真实订阅（日志不打印 URL）
-- 分别执行 `upstream` 与 `china_compat` 两套构建
+- 分别执行 `upstream` 与 `china_compat` 两套构建，并保留两份明确命名产物：
+  - `dist/mihomo.yaml`（upstream）
+  - `dist/mihomo-china-compat.yaml`（china_compat）
 - 记录 source / provider / final 的 proxies 数量
 - 本机有 `mihomo` 时执行 `mihomo -t`
 - 产物写入 gitignored 的 `dist/`

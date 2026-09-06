@@ -147,6 +147,75 @@ module BuildHelpers
   end
   private_class_method :exec_file?
 
+  # 将 candidate 原子地提升为 output，且保证失败时可恢复：
+  #   1. 若 output 已存在，先复制为同目录 backup（不删除 output）
+  #   2. 将 candidate 移到 output（Windows 上先尝试 rename，失败再 cp+rm）
+  #   3. 若移动失败，尝试把 backup 复制回 output 恢复原状，然后删除 backup
+  #   4. 成功后删除 backup
+  # 任何步骤失败都抛出 MPK::Error，但保证“旧的可用 output 尽量不被破坏”。
+  # 移动文件（Windows 兼容）。抽成独立方法以便测试注入故障。
+  def move_file(candidate, output_path)
+    if Gem.win_platform?
+      begin
+        FileUtils.mv(candidate, output_path)
+      rescue SystemCallError
+        # Windows 上 mv 到已存在目标可能失败：改走 cp + 删源
+        if File.file?(output_path)
+          File.delete(output_path)
+        end
+        FileUtils.cp(candidate, output_path)
+        File.delete(candidate)
+      end
+    else
+      FileUtils.mv(candidate, output_path)
+    end
+  end
+
+  # 复制文件（目标已存在时先删除，兼容不同 Ruby 版本缺少 remove_destination）。
+  def copy_over(src, dest)
+    if File.file?(dest)
+      File.delete(dest)
+    end
+    FileUtils.cp(src, dest)
+  end
+
+  # 将 candidate 原子地提升为 output，且保证失败时可恢复：
+  #   1. 若 output 已存在，先复制为同目录 backup（不删除 output）
+  #   2. 将 candidate 移到 output
+  #   3. 若移动失败，尝试把 backup 复制回 output 恢复原状，然后删除 backup
+  #   4. 成功后删除 backup
+  # 任何步骤失败都抛出 MPK::Error，但保证"旧的可用 output 尽量不被破坏"。
+  def promote_file(candidate, output_path)
+    directory = File.dirname(output_path)
+    FileUtils.mkdir_p(directory)
+
+    backup = nil
+    if File.file?(output_path)
+      backup = File.join(directory, ".mpk-backup-#{File.basename(output_path)}")
+      begin
+        FileUtils.cp(output_path, backup, preserve: true)
+      rescue SystemCallError => e
+        raise MPK::Error, "failed to back up existing output #{output_path}: #{e.message}"
+      end
+    end
+
+    begin
+      move_file(candidate, output_path)
+    rescue SystemCallError => e
+      # 提升失败：尽力恢复旧 output
+      if backup && File.file?(backup)
+        begin
+          copy_over(backup, output_path)
+        rescue SystemCallError
+          # 恢复也失败时，至少保留 backup 供人工恢复
+          raise MPK::Error, "promotion failed and restore failed: #{e.message}; backup kept at #{backup}"
+        end
+      end
+      raise MPK::Error, "promotion failed: #{e.message}"
+    ensure
+      File.delete(backup) if backup && File.file?(backup)
+    end
+  end
   def write_and_test(document, output_path)
     FileUtils.mkdir_p(File.dirname(output_path))
 
@@ -165,16 +234,10 @@ module BuildHelpers
         puts '[validate] mihomo not found; core validation skipped'
       end
 
-      # Windows 上 File.rename/mv 在目标已存在或跨卷时会失败（EACCES），
-      # 且 Tempfile 打开句柄会阻止移动；先关闭并移除旧目标。
+      # Windows 上 Tempfile 打开句柄会阻止移动，先关闭。
       tmp.close if tmp.respond_to?(:close) && !tmp.closed?
-      File.delete(output_path) if File.file?(output_path)
 
-      begin
-        FileUtils.mv(tmp.path, output_path)
-      rescue SystemCallError
-        FileUtils.cp(tmp.path, output_path, remove_destination: true)
-      end
+      promote_file(tmp.path, output_path)
     end
   end
 end

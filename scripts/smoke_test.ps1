@@ -40,20 +40,28 @@ if (-not (Test-Path $configFile)) {
 $ruby = (Get-Command ruby).Source
 $buildScript = Join-Path $Root 'scripts\build.rb'
 
-$profiles = @('upstream', 'china_compat')
+# 每个 profile 使用明确命名的产物，便于人工比对两套 DNS 行为。
+$profiles = @(
+    @{ name = 'upstream';     output = 'dist\mihomo.yaml' },
+    @{ name = 'china_compat'; output = 'dist\mihomo-china-compat.yaml' }
+)
 $failures = @()
+$artifacts = @()
 
 foreach ($profile in $profiles) {
+    $profileName = $profile.name
+    $outputPath = Join-Path $Root $profile.output
     Write-Host ''
-    Write-Host "==== smoke: dns_profile=$profile ===="
+    Write-Host "==== smoke: dns_profile=$profileName ===="
     Write-Host '[smoke] building (subscription URL is read from MPK_SOURCE_URL, never printed)'
-    & $ruby $buildScript $configFile $profile
+    & $ruby $buildScript $configFile $profileName $outputPath
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[smoke] FAILED dns_profile=$profile" -ForegroundColor Red
-        $failures += $profile
+        Write-Host "[smoke] FAILED dns_profile=$profileName" -ForegroundColor Red
+        $failures += $profileName
         continue
     }
-    Write-Host "[smoke] OK dns_profile=$profile" -ForegroundColor Green
+    $artifacts += "$($profile.output)"
+    Write-Host "[smoke] OK dns_profile=$profileName -> $($profile.output)" -ForegroundColor Green
 }
 
 if ($failures.Count -gt 0) {
@@ -64,7 +72,11 @@ if ($failures.Count -gt 0) {
 
 Write-Host ''
 Write-Host '=== smoke summary (proxies counts are logged by scripts/build.rb above) ==='
-Write-Host '=== artifacts: dist/mihomo.yaml (upstream) / dist/mihomo-china-compat.yaml (china_compat) ==='
+if ($artifacts.Count -gt 0) {
+    Write-Host ("=== artifacts written: " + ($artifacts -join ', ') + " ===")
+} else {
+    Write-Host '=== no artifacts written (all builds failed) ==='
+}
 
 # 提示 mihomo -t：由 write_and_test 在 mihomo 存在时自动执行
 if (Get-Command mihomo -ErrorAction SilentlyContinue) {

@@ -10,7 +10,7 @@ mihomo-policy-kit (mpk)
 
 Usage:
   ./bin/mpk doctor
-  ./bin/mpk build [config.yaml] [upstream|china_compat]
+  ./bin/mpk build [config.yaml] [upstream|china_compat] [output.yaml]
   ./bin/mpk validate <mihomo.yaml>
   ./bin/mpk version
 
@@ -65,13 +65,17 @@ case "${1:-}" in
   build)
     shift
     DNS_PROFILE=""
+    OUTPUT_FILE=""
     if [ "$#" -gt 0 ]; then
       CONFIG_FILE="$1"
     fi
     if [ "$#" -gt 1 ]; then
       DNS_PROFILE="$2"
     fi
-    exec ruby "$ROOT_DIR/scripts/build.rb" "$CONFIG_FILE" "$DNS_PROFILE"
+    if [ "$#" -gt 2 ]; then
+      OUTPUT_FILE="$3"
+    fi
+    exec ruby "$ROOT_DIR/scripts/build.rb" "$CONFIG_FILE" "$DNS_PROFILE" "$OUTPUT_FILE"
     ;;
   validate)
     shift

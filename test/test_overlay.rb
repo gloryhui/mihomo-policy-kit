@@ -134,7 +134,7 @@ class OverlayTest < Minitest::Test
     end
   end
 
-  def test_geodata_loader_upstream_removes_loader
+  def test_geodata_loader_upstream_preserves_provider_value
     Dir.mktmpdir do |dir|
       rules = File.join(dir, 'custom.list')
       File.write(rules, "")
@@ -143,6 +143,23 @@ class OverlayTest < Minitest::Test
       config['patches']['geodata_loader'] = 'upstream'
       overlay = MPK::Overlay.new(config: config, group_map: group_map)
       document = base_document.merge('geodata-loader' => 'standard')
+      overlay.apply!(document, root_dir: dir)
+
+      # upstream = no-op：Provider 生成的值必须原样保留
+      assert_equal 'standard', document['geodata-loader']
+    end
+  end
+
+  def test_geodata_loader_upstream_keeps_missing_loader_absent
+    Dir.mktmpdir do |dir|
+      rules = File.join(dir, 'custom.list')
+      File.write(rules, "")
+
+      config = base_config(rules)
+      config['patches']['geodata_loader'] = 'upstream'
+      overlay = MPK::Overlay.new(config: config, group_map: group_map)
+      document = base_document
+      document.delete('geodata-loader')
       overlay.apply!(document, root_dir: dir)
 
       refute document.key?('geodata-loader')

@@ -234,4 +234,83 @@ class BuildHelpersTest < Minitest::Test
   def test_command_path_missing_returns_nil
     assert_nil BuildHelpers.command_path('mpk-definitely-not-a-real-command-xyz')
   end
+# ---- 可恢复 promotion（Sol Review #2） ----
+
+  def test_promote_file_replaces_existing_output_and_cleans_backup
+    Dir.mktmpdir do |dir|
+      output = File.join(dir, 'out.yaml')
+      File.write(output, 'old')
+      candidate = File.join(dir, 'candidate.yaml')
+      File.write(candidate, 'new')
+
+      BuildHelpers.promote_file(candidate, output)
+
+      assert_equal 'new', File.read(output)
+      refute File.exist?(candidate)
+      # backup 应被清理（同目录 .mpk-backup-* 不存在）
+      backups = Dir.glob(File.join(dir, '.mpk-backup-*'))
+      assert_empty backups
+    end
+  end
+
+  def test_promote_file_without_existing_output
+    Dir.mktmpdir do |dir|
+      output = File.join(dir, 'out.yaml')
+      candidate = File.join(dir, 'candidate.yaml')
+      File.write(candidate, 'new')
+
+      BuildHelpers.promote_file(candidate, output)
+
+      assert_equal 'new', File.read(output)
+      refute File.exist?(candidate)
+    end
+  end
+
+  def test_promote_file_restores_backup_when_move_fails
+    Dir.mktmpdir do |dir|
+      output = File.join(dir, 'out.yaml')
+      File.write(output, 'GOOD_OLD_CONTENT')
+      candidate = File.join(dir, 'candidate.yaml')
+      File.write(candidate, 'NEW_CONTENT')
+
+      # 临时替换 move_file 抛出错误模拟 move 阶段故障（例如权限/杀软占用）
+      original = BuildHelpers.method(:move_file)
+      BuildHelpers.singleton_class.send(:define_method, :move_file) do |*_args|
+        raise Errno::EACCES, 'simulated move failure'
+      end
+
+      begin
+        error = assert_raises(MPK::Error) do
+          BuildHelpers.promote_file(candidate, output)
+        end
+        assert_match(/promotion failed/, error.message)
+      ensure
+        BuildHelpers.singleton_class.send(:define_method, :move_file, original)
+      end
+
+      # 旧 output 必须仍完整保留（restore 成功路径）
+      assert_equal 'GOOD_OLD_CONTENT', File.read(output)
+    end
+  end
+
+  def test_promote_file_keeps_old_output_intact_on_failure
+    Dir.mktmpdir do |dir|
+      output = File.join(dir, 'out.yaml')
+      File.write(output, 'GOOD_OLD_CONTENT')
+      candidate = File.join(dir, 'candidate.yaml')
+      File.write(candidate, 'NEW_CONTENT')
+
+      # 模拟 promotion 阶段故障：candidate 在移动前被删除 -> FileUtils.mv 抛 ENOENT
+      File.delete(candidate)
+
+      begin
+        BuildHelpers.promote_file(candidate, output)
+        flunk 'expected promotion to fail'
+      rescue MPK::Error
+        # 旧 output 必须完整保留（restore 成功路径）
+        assert_equal 'GOOD_OLD_CONTENT', File.read(output)
+      end
+    end
+  end
 end
+

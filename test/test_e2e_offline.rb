@@ -70,6 +70,34 @@ class OfflineE2ETest < Minitest::Test
     [stdout, stderr, status]
   end
 
+  # Sol Review #3：build.rb 第三参数覆盖输出路径，smoke 可保留两份明确命名产物。
+  def test_output_override_keeps_two_profiles
+    setup_workdir do |dir|
+      config_path = File.join(dir, 'config.yaml')
+      output_up = File.join(dir, 'dist', 'mihomo.yaml')
+      output_cc = File.join(dir, 'dist', 'mihomo-china-compat.yaml')
+
+      # config 默认写 upstream -> mihomo.yaml；再用第三参数覆盖 china_compat -> mihomo-china-compat.yaml
+      write_lf(config_path, YAML.dump(build_config(dir, dns_profile: 'upstream', output: output_up)))
+      _out, _err, status = run_build(config_path)
+      assert status.success?, "first build failed"
+
+      out2, err2, status2 = Open3.capture3(
+        ruby, File.join(ROOT, 'scripts/build.rb'), config_path, 'china_compat', output_cc
+      )
+      assert status2.success?, "second build failed: #{out2} #{err2}"
+
+      assert File.file?(output_up), 'upstream output missing'
+      assert File.file?(output_cc), 'china_compat output missing'
+
+      doc_up = MPK::YAMLUtil.load_file(output_up)
+      doc_cc = MPK::YAMLUtil.load_file(output_cc)
+      # upstream 保留原始 DNS（dns.google），china_compat 使用国内 DoH
+      assert_equal ['https://dns.google/dns-query'], doc_up.dig('dns', 'nameserver')
+      assert_equal ['https://223.5.5.5/dns-query', 'https://120.53.53.53/dns-query'], doc_cc.dig('dns', 'nameserver')
+    end
+  end
+
   def test_upstream_profile_e2e
     setup_workdir do |dir|
       output = File.join(dir, 'dist', 'mihomo.yaml')
