@@ -15,38 +15,60 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Do not pipe gh JSON into ConvertFrom-Json here.
-# On native Windows/PowerShell, native-command output can be surfaced as
-# multiple strings and encoding/line handling differs from Unix hosts.
-# Let gh's built-in jq support select and serialize the single task instead.
-$row = & gh issue list `
+# Keep native-command parsing deliberately simple on Windows.
+# We only ask gh for one scalar value at a time instead of transporting
+# JSON/TSV through PowerShell, which avoids quoting/encoding surprises.
+$issueNumberRaw = & gh issue list `
     --repo $Repo `
     --state open `
     --search '"[READY]" in:title' `
     --limit 100 `
-    --json number,title,url,createdAt `
-    --jq 'sort_by([.createdAt, .number]) | .[0] | if . == null then empty else [.number, .title, .url] | @tsv end'
+    --json number,createdAt `
+    --jq 'sort_by([.createdAt, .number]) | .[0].number // empty'
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error '[codex-next] failed to query GitHub issues'
     exit 1
 }
 
-$rowText = ($row | Out-String).Trim()
-if ([string]::IsNullOrWhiteSpace($rowText)) {
+$issueNumber = ($issueNumberRaw | Out-String).Trim()
+if ([string]::IsNullOrWhiteSpace($issueNumber)) {
     Write-Host '[codex-next] no READY task'
     exit 3
 }
 
-$parts = $rowText -split "`t", 3
-if ($parts.Count -ne 3) {
-    Write-Error '[codex-next] unexpected gh output format'
+if ($issueNumber -notmatch '^\d+$') {
+    Write-Error "[codex-next] unexpected issue number output: $issueNumber"
     exit 1
 }
 
-$issueNumber = $parts[0]
-$issueTitle = $parts[1]
-$issueUrl = $parts[2]
+$issueTitleRaw = & gh issue view $issueNumber `
+    --repo $Repo `
+    --json title `
+    --jq '.title'
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "[codex-next] failed to read issue #$issueNumber title"
+    exit 1
+}
+
+$issueUrlRaw = & gh issue view $issueNumber `
+    --repo $Repo `
+    --json url `
+    --jq '.url'
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "[codex-next] failed to read issue #$issueNumber URL"
+    exit 1
+}
+
+$issueTitle = ($issueTitleRaw | Out-String).Trim()
+$issueUrl = ($issueUrlRaw | Out-String).Trim()
+
+if ([string]::IsNullOrWhiteSpace($issueTitle) -or [string]::IsNullOrWhiteSpace($issueUrl)) {
+    Write-Error "[codex-next] incomplete metadata for issue #$issueNumber"
+    exit 1
+}
 
 Write-Host "NEXT_ISSUE=$issueNumber"
 Write-Host "TITLE=$issueTitle"
