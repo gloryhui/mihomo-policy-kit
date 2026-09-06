@@ -312,5 +312,47 @@ class BuildHelpersTest < Minitest::Test
       end
     end
   end
+
+  # Sol Review #2（第二轮）：restore 也失败时，backup 必须真实保留。
+  def test_promote_file_keeps_backup_when_restore_fails
+    Dir.mktmpdir do |dir|
+      output = File.join(dir, 'out.yaml')
+      File.write(output, 'GOOD_OLD_CONTENT')
+      candidate = File.join(dir, 'candidate.yaml')
+      File.write(candidate, 'NEW_CONTENT')
+
+      # 同时让 move_file 与 copy_over 失败，覆盖最坏路径
+      original_move = BuildHelpers.method(:move_file)
+      original_copy = BuildHelpers.method(:copy_over)
+      BuildHelpers.singleton_class.send(:define_method, :move_file) do |*_args|
+        raise Errno::EACCES, 'simulated move failure'
+      end
+      BuildHelpers.singleton_class.send(:define_method, :copy_over) do |*_args|
+        raise Errno::EACCES, 'simulated restore failure'
+      end
+
+      error = nil
+      begin
+        BuildHelpers.promote_file(candidate, output)
+        flunk 'expected promotion to fail'
+      rescue MPK::Error => e
+        error = e
+      ensure
+        BuildHelpers.singleton_class.send(:define_method, :move_file, original_move)
+        BuildHelpers.singleton_class.send(:define_method, :copy_over, original_copy)
+      end
+
+      refute_nil error, 'should raise MPK::Error'
+      assert_match(/promotion failed and restore failed/, error.message)
+
+      # 错误消息中的 backup 路径必须真实存在
+      match = /backup kept at (.+)/.match(error.message)
+      refute_nil match, "error message should contain backup path: #{error.message}"
+      backup_path = match[1].strip
+      assert File.file?(backup_path), "backup should exist on disk: #{backup_path}"
+      # backup 内容仍是旧 good output
+      assert_equal 'GOOD_OLD_CONTENT', File.read(backup_path)
+    end
+  end
 end
 

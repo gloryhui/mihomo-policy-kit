@@ -199,21 +199,30 @@ module BuildHelpers
       end
     end
 
+    promotion_succeeded = false
+    restore_succeeded = false
+
     begin
       move_file(candidate, output_path)
+      promotion_succeeded = true
     rescue SystemCallError => e
       # 提升失败：尽力恢复旧 output
       if backup && File.file?(backup)
         begin
           copy_over(backup, output_path)
+          restore_succeeded = true
         rescue SystemCallError
-          # 恢复也失败时，至少保留 backup 供人工恢复
+          # 恢复也失败：必须真实保留 backup 供人工恢复（ensure 不会删除它）
           raise MPK::Error, "promotion failed and restore failed: #{e.message}; backup kept at #{backup}"
         end
       end
       raise MPK::Error, "promotion failed: #{e.message}"
     ensure
-      File.delete(backup) if backup && File.file?(backup)
+      # 只在 promotion 成功或 restore 成功时才清理 backup；
+      # restore 失败路径已在 rescue 内 raise，ensure 不会触碰 backup。
+      if backup && File.file?(backup) && (promotion_succeeded || restore_succeeded)
+        File.delete(backup)
+      end
     end
   end
   def write_and_test(document, output_path)
