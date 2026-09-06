@@ -1,0 +1,30 @@
+# mihomo-policy-kit 自定义规则示例
+#
+# 格式沿用 Mihomo rule 语法，但策略目标使用“逻辑目标名”。
+# 构建时会根据当前 Provider 的 group map 转换成真实策略组。
+#
+# 例如：
+#   ai -> 🤖 AI 服务
+#   us -> 🇺🇸 美国节点
+#
+# 空行和 # 开头的注释会被忽略。
+
+# AI
+DOMAIN-SUFFIX,experientiallabs.ai,ai
+# DOMAIN,api.example.com,ai
+
+# 指定区域
+# DOMAIN-SUFFIX,example-us.com,us
+# DOMAIN-SUFFIX,example-hk.com,hk
+
+# IP / CIDR
+# IP-CIDR,8.8.8.8/32,global,no-resolve
+# IP-CIDR,192.168.0.0/16,direct,no-resolve
+# IP-CIDR6,2606:4700::/32,global,no-resolve
+
+# 服务策略
+# DOMAIN-SUFFIX,youtube-example.com,youtube
+# DOMAIN-SUFFIX,google-example.com,google
+
+# 拦截
+# DOMAIN-SUFFIX,ads.example.com,reject
