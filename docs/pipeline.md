@@ -94,13 +94,50 @@ Sol 应将 Epic 拆成较小 Task，例如：
 
 ## Codex 工作入口
 
+Linux / macOS / WSL：
+
 ```bash
 ./scripts/codex-next.sh
 ```
 
-脚本只负责找到下一任务，不负责自动改 Issue 状态或自动执行 Codex。
+Windows PowerShell 7+：
+
+```powershell
+pwsh -File .\scripts\codex-next.ps1
+```
+
+Windows 当前是正式支持的“任务领取环境”。Provider 仍可继续使用 Bash 实现；真实 Provider 端到端执行可使用 Git Bash 或 WSL。不要把“CLI 入口跨平台”和“所有 Provider 都必须原生 PowerShell”混成一锅。
+
+两个 task picker 都只负责找到下一任务，不负责自动改 Issue 状态或自动执行 Codex。
 
 Codex 读取到任务后必须遵守根目录 `AGENTS.md`。
+
+## Windows 推荐环境
+
+建议：
+
+```text
+PowerShell 7+
+Git for Windows
+gh CLI
+Ruby 3.x
+Git Bash 或 WSL（用于 Bash Provider）
+```
+
+确认：
+
+```powershell
+pwsh --version
+git --version
+gh --version
+ruby --version
+```
+
+首次使用 GitHub CLI：
+
+```powershell
+gh auth login
+```
 
 ## PR 要求
 
