@@ -85,6 +85,21 @@ class PublisherTest < Minitest::Test
     assert_equal first[:build_id], result2[:previous]
   end
 
+  def test_publish_previous_content_reuses_build_not_new_version
+    a = write_valid_yaml(name: 'a', proxies: [{ 'name' => 'A', 'type' => 'ss', 'server' => '127.0.0.1', 'port' => 443, 'cipher' => 'aes-128-gcm', 'password' => 'x' }])
+    b = write_valid_yaml(name: 'b', proxies: [{ 'name' => 'B', 'type' => 'ss', 'server' => '127.0.0.1', 'port' => 8443, 'cipher' => 'aes-128-gcm', 'password' => 'y' }])
+    first = @pub.publish(a)
+    @pub.publish(b)
+    builds_before = @pub.status[:builds].length
+
+    # 发布回 previous（A）的内容：应复用 first build 作为 current，不新建版本
+    result = @pub.publish(a)
+    refute result[:published], 're-publishing previous content should not create a build'
+    assert_equal first[:build_id], result[:build_id]
+    assert_equal builds_before, @pub.status[:builds].length
+    assert_equal first[:build_id], @pub.status[:current]
+  end
+
   def test_rollback_without_previous_raises
     artifact = write_valid_yaml
     @pub.publish(artifact)

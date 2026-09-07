@@ -51,9 +51,15 @@ module MPK
         content = File.binread(artifact_path)
         sha256 = Digest::SHA256.hexdigest(content)
 
-        # 幂等：若已存在同内容 build，不新建版本
+        # 幂等：若已存在同内容 build，直接复用它作为 current（不新建重复版本），
+        # 即使该 build 不是当前 current（例如发布回 previous 的内容）。
         existing = find_build_by_sha256(sha256)
-        if existing && runtime.current_build_id == existing
+        if existing
+          if runtime.current_build_id == existing
+            return { build_id: existing, published: false, current: existing, previous: runtime.previous_build_id, stats: stats }
+          end
+
+          runtime.promote!(existing)
           return { build_id: existing, published: false, current: existing, previous: runtime.previous_build_id, stats: stats }
         end
 
