@@ -151,9 +151,10 @@ module MPK
       # 不影响其他 token。
       def revoke_token(name)
         runtime.init!
-        token = tokens.find_by_name(name)
-        raise MPK::Error, 'token not found: ' + name.to_s if token.nil?
+        record = tokens.find_by_name(name)
+        raise MPK::Error, 'token not found: ' + name.to_s if record.nil?
 
+        token = record['token']
         runtime.remove_token_view(token)
         tokens.revoke(name)
         TokenStore.fingerprint(token)
