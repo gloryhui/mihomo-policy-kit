@@ -1,0 +1,14 @@
+# mihomo-policy-kit Publisher - systemd timer (V0.2)
+#
+# 每 6 小时执行一次 mpk-publisher.service（build + publish）。
+# 调整 OnCalendar 满足自己的更新频率；失败不会影响 current。
+
+[Unit]
+Description=Run mihomo-policy-kit publisher every 6 hours
+
+[Timer]
+OnCalendar=*-*-* 00/6:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+proxies:
+  - name: "Fake-US-01"
+    type: ss
+    server: 127.0.0.1
+    port: 443
+    cipher: aes-128-gcm
+    password: fake-password-123
+proxy-groups:
+  - name: "🌍 全球节点"
+    type: select
+    proxies:
+      - "Fake-US-01"
+rules:
+  - "MATCH,🌍 全球节点"
