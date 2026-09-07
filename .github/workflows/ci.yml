@@ -74,7 +74,11 @@ jobs:
           ruby test/test_build_helpers.rb
           ruby test/publisher/test_build_id.rb
           ruby test/publisher/test_token.rb
-          # Shared-current Publisher filesystem semantics use Linux symlinks and run in linux.
+          ruby test/publisher/test_publisher.rb
+          ruby test/publisher/test_publisher_secret.rb
+          ruby test/publisher/test_publisher_fault_injection.rb
+          ruby test/publisher/test_publisher_crash_recovery.rb
+          ruby test/publisher/test_publisher_staging_atomicity.rb
           ruby test/publisher/test_nginx_example.rb
 
       - name: Provider wrapper fixture test
