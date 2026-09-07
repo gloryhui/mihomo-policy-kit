@@ -101,6 +101,7 @@ jobs:
               echo "error_log /tmp/mpk-nginx-prefix/logs/error.log;"
               echo 'events {}'
               echo 'http {'
+              echo 'access_log /tmp/mpk-nginx-prefix/logs/access.log;'
               cat /tmp/mpk-server.conf
               echo '}'
             } > /tmp/mpk-nginx-test.conf
