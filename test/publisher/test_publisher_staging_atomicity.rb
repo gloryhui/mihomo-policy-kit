@@ -31,8 +31,18 @@ end
 class PublisherStagingAtomicityTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
 
+  def require_symlink_support!
+    probe = File.join(@dir, ".symlink-probe-#{Process.pid}")
+    File.symlink(@dir, probe)
+  rescue NotImplementedError, SystemCallError
+    skip 'publisher shared-pointer integration requires filesystem symlink support (Linux production coverage)'
+  ensure
+    FileUtils.rm_f(probe) if probe && File.symlink?(probe)
+  end
+
   def setup
     @dir = Dir.mktmpdir('mpk-stage-')
+    require_symlink_support!
     @runtime = BuildCommitObservingRuntime.new(File.join(@dir, 'runtime'))
     @pub = MPK::Publisher::Publisher.new(root: @runtime.root, runtime: @runtime)
     @pub.init!

@@ -11,8 +11,18 @@ class PublisherTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   SECRET = 'VERY_SECRET_PUBLISH_TOKEN_123'
 
+  def require_symlink_support!
+    probe = File.join(@dir, ".symlink-probe-#{Process.pid}")
+    File.symlink(@dir, probe)
+  rescue NotImplementedError, SystemCallError
+    skip 'publisher shared-pointer integration requires filesystem symlink support (Linux production coverage)'
+  ensure
+    FileUtils.rm_f(probe) if probe && File.symlink?(probe)
+  end
+
   def setup
     @dir = Dir.mktmpdir('mpk-pub-')
+    require_symlink_support!
     @pub = MPK::Publisher::Publisher.new(root: File.join(@dir, 'runtime'))
     @pub.init!
   end
@@ -199,7 +209,7 @@ class PublisherTest < Minitest::Test
 
   def test_token_create_failure_rolls_back_record
     # 尚无 current build 时，create_token 应报错且不留孤儿 token 记录。
-    # （新布局 token 视图是真实文件，不依赖 symlink；失败仅发生在无 current 等场景）
+    # （共享 current 的 symlink 布局中，失败发生在无 current 等场景）
     error = assert_raises(MPK::Error) do
       @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
     end

@@ -7,12 +7,8 @@ require 'fileutils'
 require_relative '../../lib/overlay'
 require_relative '../../lib/publisher/publisher'
 
-# Sol Review P0 故障注入回归测试（第二轮原子性设计）：
-#   - 新设计原子点：commit_build 的 staging->builds rename、write_active 的
-#     active-state.json rename、write_view_file 的视图文件 rename。
-#   - 通过子类 Runtime 在第 N 次 atomic_rename 注入失败。
-# 断言失败后不破坏 good state：current/previous 保持、builds 不受污染、
-# token URL 始终可读（旧或新完整版本）。
+# Sol Review P0 故障注入回归：build staging、previous pointer、current pointer
+# 的 rename 分别失败时，current/previous 与稳定 token URL 均保持 good state。
 class FaultInjectingRuntime < MPK::Publisher::Runtime
   attr_accessor :fail_on_call
 
@@ -41,8 +37,18 @@ end
 class PublisherFaultInjectionTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
 
+  def require_symlink_support!
+    probe = File.join(@dir, ".symlink-probe-#{Process.pid}")
+    File.symlink(@dir, probe)
+  rescue NotImplementedError, SystemCallError
+    skip 'publisher shared-pointer integration requires filesystem symlink support (Linux production coverage)'
+  ensure
+    FileUtils.rm_f(probe) if probe && File.symlink?(probe)
+  end
+
   def setup
     @dir = Dir.mktmpdir('mpk-fault-')
+    require_symlink_support!
   end
 
   def teardown
@@ -90,15 +96,16 @@ class PublisherFaultInjectionTest < Minitest::Test
 
   # 无 token 时 publish(C) 的 rename 序列：
   #   1 = commit_build(staging -> builds/C)
-  #   2 = write_active(active-state.json)
-  # 在 active 指针写入失败时，current/previous 必须完全不变。
+  #   2 = previous pointer
+  #   3 = current pointer（唯一全局公开切换点）。
+  # 在 current 指针写入失败时，current/previous 必须完全不变。
   def test_promote_active_write_failure_keeps_current_and_previous
     runtime = build_runtime
     pub = publisher(runtime)
     a_id, b_id = two_version_state(pub, runtime)
 
     runtime.reset_rename_counter!
-    runtime.fail_on_call = 2 # active-state.json rename 失败
+    runtime.fail_on_call = 3 # current pointer rename 失败
     assert_raises(Errno::EIO) { pub.publish(write_yaml('C', 9443)) }
 
     assert_state_b_a(pub, a_id, b_id)
@@ -129,14 +136,14 @@ class PublisherFaultInjectionTest < Minitest::Test
               .any? { |p| !File.basename(p).start_with?('.') && !File.directory?(p) }
   end
 
-  # rollback：active 指针写入失败 -> current/previous 保持，current 恒不缺失。
+  # rollback：current pointer 写入失败 -> current/previous 保持，current 恒不缺失。
   def test_rollback_active_write_failure_keeps_state
     runtime = build_runtime
     pub = publisher(runtime)
     a_id, b_id = two_version_state(pub, runtime)
 
     runtime.reset_rename_counter!
-    runtime.fail_on_call = 1 # rollback 里 write_active 的 rename 是第 1 次
+    runtime.fail_on_call = 2 # rollback 里 current pointer rename 是第 2 次
     assert_raises(Errno::EIO) { pub.rollback }
 
     assert_state_b_a(pub, a_id, b_id)
@@ -149,8 +156,7 @@ class PublisherFaultInjectionTest < Minitest::Test
     assert_equal b_id, result[:previous]
   end
 
-  # active 指针已切到 C、但 token 视图原子覆盖失败时，promote 必须把 active
-  # 恢复为 B/A 并让 token 视图回到 B；全过程目标文件都没有被删除。
+  # current pointer 最终切换失败时，promote 必须恢复 B/A；token symlink 从未逐个复制或删除。
   def test_token_view_refresh_failure_restores_good_active_state
     runtime = build_runtime
     pub = publisher(runtime)
@@ -160,11 +166,11 @@ class PublisherFaultInjectionTest < Minitest::Test
     old_content = File.binread(token_path)
 
     runtime.reset_rename_counter!
-    runtime.fail_on_call = 3 # commit_build, active-state, token view
+    runtime.fail_on_call = 3 # commit_build, previous pointer, current pointer
     assert_raises(Errno::EIO) { pub.publish(write_yaml('C', 9443)) }
 
     assert_state_b_a(pub, a_id, b_id)
-    assert File.file?(token_path), 'failed refresh must not remove the token URL path'
+    assert File.file?(token_path), 'failed global switch must not remove the token URL path'
     assert_equal old_content, File.binread(token_path)
   end
 end

@@ -79,8 +79,7 @@ mihomo-policy-kit 负责：
 ### 输出
 
 - `dist/mihomo.yaml`（仅 Mihomo YAML）
-- V0.2 Publisher：`builds/<build-id>/mihomo.yaml`（immutable 版本）、原子 `active-state.json` 的
-  `current` / `previous` 状态指针、
+- V0.2 Publisher：`builds/<build-id>/mihomo.yaml`（immutable 版本）、共享 `current` / `previous` symlink 状态指针（`current` 的原子替换同时切换所有 token）、
   `/sub/<token>/mihomo.yaml` 稳定 HTTPS 订阅 URL（多 Token，可独立吊销）
 
 ### 当前主要兼容客户端
@@ -197,8 +196,7 @@ bash bin/mpk publisher status
 bash bin/mpk rollback
 ```
 
-多设备 Token 稳定 URL（token 公开视图是原子替换的真实文件，Windows 与 Linux 均可创建；
-生产部署仍以 Linux + Nginx 为目标）：
+多设备 Token 稳定 URL（token 公开视图是原子替换的稳定 symlink，生产部署以 Linux + Nginx 为目标；Windows 仅运行不依赖 symlink 的通用检查）：
 
 ```powershell
 # 一次性输出完整订阅 URL
@@ -356,7 +354,7 @@ ruby test/publisher/test_publisher_crash_recovery.rb
 ruby test/publisher/test_publisher_staging_atomicity.rb
 ruby test/publisher/test_nginx_example.rb
 
-# Publisher integration（真实 token URL / 原子 active 指针；Windows 与 Linux 均运行）
+# Publisher integration（真实 token URL / 共享 current 原子指针；Linux 运行）
 ruby test/publisher/test_publisher_integration.rb
 
 # Provider wrapper 离线测试（需要 bash）

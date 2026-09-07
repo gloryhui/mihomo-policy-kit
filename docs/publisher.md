@@ -18,8 +18,7 @@ mihomo 时执行 `mihomo -t`）。任何发布失败都不会改变线上 curren
 
 - **生产发布运行目标：Linux**（VPS / NAS / Linux Server + Nginx）。
 - Windows + PowerShell 7 仍是主要开发环境：Ruby 纯逻辑与单元测试可在 Windows 运行。
-- Nginx / systemd 是 Linux 生产部署组件；Publisher 的 Ruby 状态机与 token 真实文件视图
-  同时在 Windows 和 Linux 测试，不需要 Windows symlink 权限。
+- Nginx / systemd 是 Linux 生产部署组件；Linux 上覆盖 Publisher 的共享 symlink 状态机与 token 视图；Windows 保留不依赖 symlink 权限的通用 Ruby 检查。
 
 ## publish root
 
@@ -41,14 +40,15 @@ MPK_PUBLIC_BASE_URL
 ```text
 <publish-root>/
   builds/<build-id>/mihomo.yaml + metadata.json   # immutable 版本；staging 后原子进入
-  active-state.json                              # 单一原子指针：{ current, previous }
+  current -> builds/<build-id>                   # 唯一公开 active pointer
+  previous -> builds/<build-id>                  # rollback pointer
   public/
-    sub/<token>/mihomo.yaml                      # 真实文件；tmp+rename 原子替换
+    sub/<token>/ -> ../../current                # 稳定 token symlink，共享 current
   token-state/<fingerprint>.json                 # token 元数据（私有敏感，含完整 token 以便吊销）
 ```
 
-- `active-state.json` 是 `current` / `previous` 的唯一事实源，tmp+rename 单点原子替换；
-  `current` 永远指向完整校验通过的 build。
+- `current` 是唯一公开 active pointer，tmp symlink + rename 单点原子替换；
+  所有 token 稳定指向它，`current` 永远指向完整校验通过的 build。
 - build 目录发布成功后视为 immutable（rollback 只切换状态指针，不重建/修改 builds）。
 - YAML 与 metadata 会先完整写到隐藏 `.build-staging-*`，再一次性 rename 进入 `builds/<build-id>`；
   崩溃最多留下 staging，绝不会作为有效 build 出现在 `list_builds`。
@@ -111,9 +111,9 @@ https://<host>/sub/<token>/mihomo.yaml
 ```
 
 - Token 使用 `SecureRandom`（CSPRNG）生成，至少 256 bit 随机熵，URL-safe，不使用可预测自增 ID。
-- `public/sub/<完整 token>/mihomo.yaml` 是真实文件：客户端 URL 中的高熵 token 与文件系统
-  公开路径完全一致，静态 Nginx 可直接命中。promotion / rollback 时以 tmp+rename 原子替换，
-  任一时刻客户端读到的只能是旧或新完整配置，不会遇到路径消失、404 或半成品。
+- `public/sub/<完整 token>` 是稳定目录 symlink，指向共享 `../../current`：客户端 URL 中的高熵 token
+  与文件系统公开路径完全一致，静态 Nginx 可直接命中。promotion / rollback 只原子替换一次
+  `current`，所以任一时刻所有 token 同时读到旧或新完整配置，不会遇到路径消失、404 或半成品。
 - `token list` 默认只显示 name + fingerprint（SHA256 前 16 hex），不打印完整 token。
 - `revoke <name>` 读取私有 token-state 拿到完整 token，删除对应的 `public/sub/<token>` 公开
   视图，不影响其他 token。

@@ -14,6 +14,16 @@ require_relative '../../lib/publisher/publisher'
 class PublisherSecretTest < Minitest::Test
   SECRET = 'VERY_SECRET_PUBLISH_TOKEN_123'
 
+  def setup
+    @symlink_probe_dir = Dir.mktmpdir('mpk-symlink-probe-')
+    probe = File.join(@symlink_probe_dir, 'link')
+    File.symlink(@symlink_probe_dir, probe)
+  rescue NotImplementedError, SystemCallError
+    skip 'publisher shared-pointer integration requires filesystem symlink support (Linux production coverage)'
+  ensure
+    FileUtils.remove_entry(@symlink_probe_dir) if @symlink_probe_dir && File.exist?(@symlink_probe_dir)
+  end
+
   def ruby
     RbConfig.ruby
   end

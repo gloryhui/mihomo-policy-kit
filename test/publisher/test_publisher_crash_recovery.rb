@@ -8,16 +8,24 @@ require_relative '../../lib/overlay'
 require_relative '../../lib/publisher/publisher'
 
 # 进程中途崩溃自愈回归测试（Sol Review P0 两轮；新原子性设计）。
-# 新设计崩溃点只剩三类，全部可自愈且不破坏 good state：
+# 共享 current pointer 设计的崩溃回归：
 #   - commit_build 中途崩溃：遗留 .build-staging-*，init! 清理，builds/ 不受污染
-#   - 视图刷新滞后：active 已切到新 current，但某 token 视图仍是旧内容，
-#     init!/下次操作 reconcile_public_views! 用当前 current 补齐（URL 恒可读旧或新）
-#   - active tmp 残留：写 active 的临时文件在 rename 前崩溃，原 active 文件未动
+#   - current pointer rename 前后：所有 token 无需 reconcile 就天然同时解析旧/新 build
 class PublisherCrashRecoveryTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
 
+  def require_symlink_support!
+    probe = File.join(@dir, ".symlink-probe-#{Process.pid}")
+    File.symlink(@dir, probe)
+  rescue NotImplementedError, SystemCallError
+    skip 'publisher shared-pointer integration requires filesystem symlink support (Linux production coverage)'
+  ensure
+    FileUtils.rm_f(probe) if probe && File.symlink?(probe)
+  end
+
   def setup
     @dir = Dir.mktmpdir('mpk-crash-')
+    require_symlink_support!
     @pub = MPK::Publisher::Publisher.new(root: File.join(@dir, 'runtime'))
     @pub.init!
   end
@@ -85,52 +93,32 @@ class PublisherCrashRecoveryTest < Minitest::Test
     assert_equal a_id, @pub.status[:previous]
   end
 
-  def test_view_refresh_lag_self_heals_on_next_init
+  # 模拟切换前崩溃：current 仍指向 B，两个稳定 token 都天然解析 B；不需要 reconcile。
+  def test_crash_before_current_pointer_switch_keeps_all_tokens_on_old_build
     a_id, b_id = two_version_state
-    t = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
-    url = File.join(runtime_root, 'public', 'sub', t[:token], 'mihomo.yaml')
+    phone = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
+    laptop = @pub.create_token('laptop', public_base_url: 'https://sub.example.invalid')
+    urls = [phone, laptop].map { |token| File.join(runtime_root, 'public', 'sub', token[:token], 'mihomo.yaml') }
 
-    # 模拟崩溃：active 已切到 A 的 state 但视图文件仍停留在 B
-    # （手工把 active-state.json 改成 current=A，视图不动）
-    File.write(File.join(runtime_root, 'active-state.json'),
-               JSON.pretty_generate('current' => a_id, 'previous' => b_id))
-
-    # 视图仍是 B 内容（滞后）
-    assert_equal File.binread(File.join(builds_dir, b_id, 'mihomo.yaml')), File.binread(url)
-
-    # 下一次 init! 自愈：视图刷新为 current=A
-    @pub.init!
-    assert_equal File.binread(File.join(builds_dir, a_id, 'mihomo.yaml')), File.binread(url)
+    assert_equal [File.binread(File.join(builds_dir, b_id, 'mihomo.yaml'))] * 2, urls.map { |url| File.binread(url) }
+    # “崩溃”发生在 final current rename 之前：无需 init!，共享 current 仍是 B。
+    assert_equal b_id, @pub.runtime.current_build_id
+    assert_equal [File.binread(urls[0])] * 2, urls.map { |url| File.binread(url) }
   end
 
-  def test_active_tmp_leftover_ignored
+  # 模拟 final current pointer rename 完成后立即崩溃：两个 token 共享同一 symlink，
+  # 在不调用 init!/reconcile 的情况下已经同时解析 A。
+  def test_crash_after_current_pointer_switch_keeps_all_tokens_on_new_build
     a_id, b_id = two_version_state
+    phone = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
+    laptop = @pub.create_token('laptop', public_base_url: 'https://sub.example.invalid')
+    urls = [phone, laptop].map { |token| File.join(runtime_root, 'public', 'sub', token[:token], 'mihomo.yaml') }
 
-    # 模拟写 active 的 tmp 文件在 rename 前崩溃：原 active 文件未动
-    tmp = File.join(runtime_root, '.active-state.json.tmp-deadbeef')
-    File.write(tmp, JSON.pretty_generate('current' => 'junk', 'previous' => nil))
+    @pub.runtime.send(:replace_pointer, @pub.runtime.current_dir, a_id)
 
-    @pub.init!
-    # tmp 不影响 active 解析；good state 不变
-    assert_equal b_id, @pub.status[:current]
-    assert_equal a_id, @pub.status[:previous]
-    File.delete(tmp) if File.exist?(tmp)
+    assert_equal a_id, @pub.runtime.current_build_id
+    assert_equal [File.binread(File.join(builds_dir, a_id, 'mihomo.yaml'))] * 2, urls.map { |url| File.binread(url) }
+    refute_equal b_id, @pub.runtime.current_build_id
   end
 
-  def test_rollback_after_crash_lag_keeps_consistency
-    a_id, b_id = two_version_state
-    t = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
-    url = File.join(runtime_root, 'public', 'sub', t[:token], 'mihomo.yaml')
-
-    # active 已 rollback（current=A, previous=B）但视图滞后仍是 B
-    File.write(File.join(runtime_root, 'active-state.json'),
-               JSON.pretty_generate('current' => a_id, 'previous' => b_id))
-
-    # 用户触发下一次 rollback：入口 init! 先自愈视图，再执行 rollback
-    result = @pub.rollback
-    assert_equal b_id, result[:current]
-    assert_equal a_id, result[:previous]
-    # 视图最终 = 新 current(B)
-    assert_equal File.binread(File.join(builds_dir, b_id, 'mihomo.yaml')), File.binread(url)
-  end
 end

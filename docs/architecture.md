@@ -222,8 +222,9 @@ V0.2 已实现 Publisher（见 `docs/publisher.md`）：
 
 ```text
 builds/<build-id>/mihomo.yaml + metadata.json   # immutable 版本；staging 后原子进入
-active-state.json                              # 单一原子指针：{ current, previous }
-public/sub/<token>/mihomo.yaml                 # 真实文件；tmp+rename 原子替换
+current -> builds/<build-id>                   # 单一原子公开指针
+previous -> builds/<build-id>                  # rollback 指针
+public/sub/<token>/ -> ../../current           # 稳定 token symlink，共享 current
 token-state/<fingerprint>.json                 # token 元数据（私有敏感，含完整 token）
 ```
 
@@ -235,8 +236,8 @@ token-state/<fingerprint>.json                 # token 元数据（私有敏感�
 
 - 只有新构建完整通过校验后才切换 `current`。
 - 发布失败 / 校验失败 / rollback 失败都不会让 current 指向半成品。
-- `active-state.json` 以单文件原子替换 current / previous；token 真实文件以原子覆盖跟随 current，
-  因而切换过程中每个已存在 token URL 始终可读到旧或新完整配置。
+- `current` symlink 以 tmp+rename 原子替换；所有 token 都稳定指向它，
+  因而一次切换对所有 token 同时生效，始终可读到旧或新完整配置。
 - 生产运行目标是 Linux + Nginx；Publisher Ruby 逻辑与 token 视图回归同时在 Windows / Linux 运行。
 
 ## 10. 安全
