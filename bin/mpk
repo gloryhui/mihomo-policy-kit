@@ -12,11 +12,19 @@ Usage:
   ./bin/mpk doctor
   ./bin/mpk build [config.yaml] [upstream|china_compat] [output.yaml]
   ./bin/mpk validate <mihomo.yaml>
+  ./bin/mpk publish <mihomo.yaml>
+  ./bin/mpk publisher status
+  ./bin/mpk rollback
+  ./bin/mpk token create <name>
+  ./bin/mpk token list
+  ./bin/mpk token revoke <name>
   ./bin/mpk version
 
 Environment:
-  MPK_CONFIG       default config file
-  MPK_SOURCE_URL   airport subscription URL (recommended)
+  MPK_CONFIG           default config file
+  MPK_SOURCE_URL       airport subscription URL (recommended)
+  MPK_PUBLISH_ROOT     publisher publish root (default: ./runtime)
+  MPK_PUBLIC_BASE_URL  https://<host>/ for stable subscription URL output
 EOF
 }
 
@@ -57,6 +65,22 @@ cmd_doctor() {
   return "$failed"
 }
 
+cmd_publisher() {
+  local sub="${1:-}"
+  shift || true
+  case "$sub" in
+    init)
+      exec ruby "$ROOT_DIR/scripts/publisher.rb" init "$@"
+      ;;
+    status)
+      exec ruby "$ROOT_DIR/scripts/publisher.rb" status "$@"
+      ;;
+    *)
+      exec ruby "$ROOT_DIR/scripts/publisher.rb" "$sub" "$@"
+      ;;
+  esac
+}
+
 case "${1:-}" in
   doctor)
     shift
@@ -82,8 +106,25 @@ case "${1:-}" in
     [ "$#" -eq 1 ] || { usage; exit 2; }
     exec ruby "$ROOT_DIR/scripts/validate.rb" "$1"
     ;;
+  publish)
+    shift
+    [ "$#" -eq 1 ] || { usage; exit 2; }
+    exec ruby "$ROOT_DIR/scripts/publisher.rb" publish "$1"
+    ;;
+  rollback)
+    shift
+    exec ruby "$ROOT_DIR/scripts/publisher.rb" rollback "$@"
+    ;;
+  token)
+    shift
+    exec ruby "$ROOT_DIR/scripts/publisher.rb" token "$@"
+    ;;
+  publisher)
+    shift
+    cmd_publisher "$@"
+    ;;
   version)
-    echo "mihomo-policy-kit v0.1.0"
+    echo "mihomo-policy-kit v0.2.0"
     ;;
   -h|--help|help|"")
     usage

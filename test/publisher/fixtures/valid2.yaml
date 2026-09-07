@@ -1,0 +1,21 @@
+proxies:
+  - name: "Fake-US-02"
+    type: ss
+    server: 127.0.0.1
+    port: 8443
+    cipher: aes-128-gcm
+    password: fake-password-789
+  - name: "Fake-HK-02"
+    type: ss
+    server: 127.0.0.1
+    port: 443
+    cipher: aes-128-gcm
+    password: fake-password-012
+proxy-groups:
+  - name: "🌍 全球节点"
+    type: select
+    proxies:
+      - "Fake-US-02"
+      - "Fake-HK-02"
+rules:
+  - "MATCH,🌍 全球节点"

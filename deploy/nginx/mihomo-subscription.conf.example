@@ -1,0 +1,76 @@
+# mihomo-policy-kit Publisher - Nginx HTTPS 静态发布示例 (V0.2)
+#
+# 说明：
+#   - 本文件是“可部署示例”，不含真实域名 / 证书路径 / token。
+#   - 部署前替换 <YOUR-DOMAIN> 与 <YOUR-CERT-PATHS>。
+#   - publish root 建议为 /var/lib/mihomo-policy-kit（由 MPK_PUBLISH_ROOT 指定）。
+#
+# 安全要点（Issue #11 05/06）：
+#   - 订阅 token 位于 URL path，属于 bearer secret：
+#       * /sub/<token>/mihomo.yaml 的 access log 必须关闭
+#       * log_not_found off，避免无效 token 探测写日志
+#   - 只允许 /sub/<token>/mihomo.yaml 这种静态路径，其余一律 404
+#   - autoindex off（无目录索引）
+#   - X-Robots-Tag: noindex, nofollow, noarchive
+#   - 提供 robots.txt 全站 Disallow
+#   - HTTPS 是必需条件；不要在 HTTP 明文下暴露订阅
+#   - CDN / WAF / 上游反代 / 全局代理日志也可能记录完整 URI，部署者必须同样关闭或脱敏
+
+server {
+    listen 443 ssl;
+    # listen [::]:443 ssl;   # IPv6 可选
+    server_name <YOUR-DOMAIN>;
+
+    ssl_certificate     <YOUR-CERT-PATH>/fullchain.pem;
+    ssl_certificate_key <YOUR-CERT-PATH>/privkey.pem;
+
+    # 生产建议：只开放 HTTPS，HTTP 直接 301 或 404
+    # (HTTP server 块示例见文件末尾，默认不提供订阅)
+
+    root /var/lib/mihomo-policy-kit/public;
+
+    autoindex off;
+    charset utf-8;
+
+    # 全局安全头：禁止搜索引擎收录订阅内容
+    add_header X-Robots-Tag "noindex, nofollow, noarchive" always;
+
+    # robots.txt 全站禁止抓取（文件放在 public/robots.txt）
+    location = /robots.txt {
+        access_log off;
+        log_not_found off;
+        add_header Content-Type text/plain;
+        return 200 "User-agent: *\nDisallow: /\n";
+    }
+
+    # 订阅稳定 URL：/sub/<token>/mihomo.yaml
+    # token 是 bearer secret：该 location 的 access log 必须关闭，
+    # 否则每次客户端定时更新都会把完整 token URI 写进日志。
+    location ~ ^/sub/[A-Za-z0-9_-]{20,}/mihomo\.yaml$ {
+        access_log off;        # 关键：token-bearing URI 不进 access log
+        log_not_found off;
+        try_files $uri =404;
+        default_type application/octet-stream;
+        add_header Content-Disposition 'attachment; filename="mihomo.yaml"';
+        add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0";
+        add_header Pragma no-cache;
+        # 只允许 GET/HEAD
+        limit_except GET HEAD { deny all; }
+    }
+
+    # 除上述 location 外，其余路径一律 404（不列目录、不暴露 builds/）
+    location / {
+        access_log off;
+        log_not_found off;
+        return 404;
+    }
+}
+
+# HTTP 明文 server：不提供订阅。可以 301 跳 HTTPS 或直接拒绝。
+# 默认不启用；如需强制跳转 HTTPS，取消注释并保证 <YOUR-DOMAIN> 可解析。
+# server {
+#     listen 80;
+#     server_name <YOUR-DOMAIN>;
+#     access_log off;
+#     return 301 https://$host$request_uri;
+# }

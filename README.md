@@ -4,7 +4,8 @@
 
 它不试图重新发明一套分流规则，而是把优秀的上游分流项目当作 Provider，再叠加你自己的规则、校验与发布流程，最终生成一份可直接被 Clash Party、Clash Verge Rev、Nikki、Clash Meta / ClashMi 等 Mihomo 客户端订阅的 `mihomo.yaml`。
 
-> 当前阶段：**v0.1 / MVP**。第一版只接入 Smart-Config-Kit 的 **Normal / 非 Smart** 版本，不使用 Mihomo Smart / LightGBM。
+> 当前阶段：**v0.2**。v0.1 已完成 Smart-Config-Kit **Normal / 非 Smart** 构建链路与真实客户端验收；
+> v0.2 增加私有 HTTPS 订阅发布器（immutable builds / current / previous / rollback / 多 Token）。
 
 ## 为什么做这个项目
 
@@ -34,7 +35,7 @@ DNS / 公共补丁
       ↓
 dist/mihomo.yaml
       ↓
-HTTPS 私有订阅（V0.2 规划，尚未实现）
+HTTPS 私有订阅（V0.2 已实现：publish / current / previous / rollback / Token）
       ↓
 Clash Party / Clash Verge / Nikki / Android Mihomo ...
 ```
@@ -77,7 +78,9 @@ mihomo-policy-kit 负责：
 
 ### 输出
 
-- `dist/mihomo.yaml`（仅 Mihomo YAML；V0.2 发布器尚未实现）
+- `dist/mihomo.yaml`（仅 Mihomo YAML）
+- V0.2 Publisher：`builds/<build-id>/mihomo.yaml`（immutable 版本）、`current` / `previous` 状态指针、
+  `/sub/<token>/mihomo.yaml` 稳定 HTTPS 订阅 URL（多 Token，可独立吊销）
 
 ### 当前主要兼容客户端
 
@@ -175,6 +178,41 @@ ruby scripts/validate.rb dist/mihomo.yaml
 bash bin/mpk doctor
 ```
 
+### 7. 发布（V0.2）
+
+把构建并校验通过的 `dist/mihomo.yaml` 发布为稳定 HTTPS 订阅：
+
+```powershell
+# publish root（默认 ./runtime，已被 gitignore）
+$env:MPK_PUBLISH_ROOT = 'F:\git\mihomo-policy-kit\runtime'
+
+# 发布（原子切换 current/previous；校验失败不会改变 current）
+bash bin/mpk publish dist/mihomo.yaml
+
+# 查看状态
+bash bin/mpk publisher status
+
+# 回滚（current/previous 互换）
+bash bin/mpk rollback
+```
+
+多设备 Token 稳定 URL（Linux 生产目标；Windows 开发环境创建 symlink 需要权限，
+生产部署请使用 Linux）：
+
+```powershell
+# 一次性输出完整订阅 URL
+$env:MPK_PUBLIC_BASE_URL = 'https://sub.example.com'
+bash bin/mpk token create phone
+bash bin/mpk token list       # 只显示 name + fingerprint
+bash bin/mpk token revoke phone
+```
+
+详细说明见 `docs/publisher.md`；Nginx HTTPS 示例见 `deploy/nginx/`，systemd / cron
+部署见 `deploy/systemd/`。
+
+> **Token 是 bearer secret**：`/sub/<token>/mihomo.yaml` 中的 token 必须走 HTTPS，
+> Nginx access log 不得记录该 URI（示例已关闭）。
+
 ## 自定义规则
 
 `rules/custom.list`：
@@ -261,6 +299,14 @@ Reality 参数等机场专属信息。
 - 节点 UUID、密码、私钥
 - 生成后的 `dist/mihomo.yaml`
 - 私有 HTTPS 发布 Token
+- Publisher runtime（`runtime/`：builds / current / previous / token-state / public token tree）
+
+V0.2 安全要点：
+
+- 订阅 token 位于 URL path，是 bearer secret；Nginx access log 必须关闭
+  （示例 `deploy/nginx/mihomo-subscription.conf.example` 已配置 `access_log off` + `log_not_found off`）
+- 完整 token 只在 `token create` 一次性输出；`token list` 只显示 fingerprint
+- 生产发布目标为 Linux + Nginx；HTTPS 是必需条件
 
 ### 本地真实订阅 Smoke Test
 
@@ -295,9 +341,17 @@ pwsh -File scripts/smoke_test.ps1
 ## 测试
 
 ```powershell
-# Ruby 单元测试（Overlay / BuildHelpers）
+# Ruby 单元测试（Overlay / BuildHelpers / Publisher）
 ruby test/test_overlay.rb
 ruby test/test_build_helpers.rb
+ruby test/publisher/test_build_id.rb
+ruby test/publisher/test_token.rb
+ruby test/publisher/test_publisher.rb
+ruby test/publisher/test_publisher_secret.rb
+ruby test/publisher/test_nginx_example.rb
+
+# Publisher Linux 集成（symlink / atomic rename；Windows 跳过 symlink 断言）
+ruby test/publisher/test_publisher_integration.rb
 
 # Provider wrapper 离线测试（需要 bash）
 bash test/providers/test_smart_config_kit.sh
@@ -308,8 +362,9 @@ ruby test/test_e2e_offline.rb
 
 CI（`.github/workflows/ci.yml`）包含：
 
-- **Linux**：Ruby 语法 + 单元测试、Bash 语法、Provider fixture 测试、离线 E2E、doctor
-- **Windows**：PowerShell 语法 + task-picker 回归、Ruby 通用逻辑测试
+- **Linux**：Ruby 语法 + 单元测试（含 Publisher）、Bash 语法、Provider fixture 测试、离线 E2E、
+  Publisher Linux 集成（symlink / atomic rename）、Nginx 语法（有 nginx 时 `nginx -t`）、doctor
+- **Windows**：PowerShell 语法 + task-picker 回归、Ruby 通用逻辑测试（含 Publisher 纯逻辑）
 
 ## 项目结构
 
@@ -325,15 +380,30 @@ mihomo-policy-kit/
 │   └── custom-rules.md
 ├── lib/
 │   ├── build_helpers.rb
-│   └── overlay.rb
+│   ├── overlay.rb
+│   └── publisher/
+│       ├── build_id.rb
+│       ├── runtime.rb
+│       ├── token.rb
+│       ├── validator.rb
+│       └── publisher.rb
 ├── providers/
 │   └── smart-config-kit/
 │       └── provider.sh
 ├── rules/
 │   └── custom.example.list
+├── deploy/
+│   ├── nginx/
+│   │   ├── mihomo-subscription.conf.example
+│   │   └── robots.txt.example
+│   └── systemd/
+│       ├── mpk-publisher.service
+│       ├── mpk-publisher.timer
+│       └── mpk-publisher.cron.example
 ├── scripts/
 │   ├── build.rb
 │   ├── validate.rb
+│   ├── publisher.rb
 │   ├── smoke_test.ps1
 │   ├── codex-next.ps1
 │   └── codex-next.sh
@@ -341,13 +411,23 @@ mihomo-policy-kit/
 │   ├── test_overlay.rb
 │   ├── test_build_helpers.rb
 │   ├── test_e2e_offline.rb
+│   ├── publisher/
+│   │   ├── test_build_id.rb
+│   │   ├── test_token.rb
+│   │   ├── test_publisher.rb
+│   │   ├── test_publisher_secret.rb
+│   │   ├── test_publisher_integration.rb
+│   │   ├── test_nginx_example.rb
+│   │   └── fixtures/
 │   └── providers/
 │       ├── test_smart_config_kit.sh
 │       └── fixtures/
 ├── vendor/
 │   └── .gitkeep
-└── dist/
-    └── .gitkeep
+├── dist/
+│   └── .gitkeep
+└── runtime/
+    └── .gitkeep   # Publisher 运行目录（gitignored，builds/current/previous/token-state 不入库）
 ```
 
 ## 路线图
@@ -366,15 +446,17 @@ mihomo-policy-kit/
 - [x] 离线端到端 fixture 测试
 - [x] Windows / Ruby 跨平台命令发现
 - [x] 真实订阅 smoke 入口
-- [ ] 私有 HTTPS 发布器（V0.2，**尚未实现**）
-- [ ] 定时构建（V0.2，**尚未实现**）
 
 ### v0.2
 
-- [ ] 私有 HTTPS 订阅发布器
-- [ ] 构建历史 / current / previous
-- [ ] 自动回滚
-- [ ] 多 Token 订阅发布
+- [x] 私有 HTTPS 订阅发布器（Publisher：publish / status / rollback / token）
+- [x] immutable builds + current / previous 状态指针
+- [x] 一键回滚（只切换状态指针，不改 builds）
+- [x] 多 Token 稳定 URL（`/sub/<token>/mihomo.yaml`），可独立吊销
+- [x] Secret 安全（token 不进日志 / Nginx access log 关闭）
+- [x] Nginx HTTPS 静态发布示例
+- [x] systemd timer / cron 自动 build -> publish 示例
+- [x] Publisher Linux 集成测试 + Windows Ruby 纯逻辑测试
 - [ ] Provider 版本锁定
 - [ ] GitHub Actions / 自建 CI 发布
 

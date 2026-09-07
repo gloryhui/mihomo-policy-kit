@@ -1,0 +1,10 @@
+# mihomo-policy-kit Publisher - cron 替代示例 (V0.2)
+#
+# 每 6 小时 build + publish 一次。生产建议优先使用 systemd timer。
+# 真实 Secret 放在权限受限文件（/etc/mihomo-policy-kit/env，0600），
+# 由脚本读取；不要写在 crontab 里。
+#
+# crontab -e (mpk 用户)：
+#   0 */6 * * * /opt/mihomo-policy-kit/bin/mpk build && /opt/mihomo-policy-kit/bin/mpk publish /opt/mihomo-policy-kit/dist/mihomo.yaml
+#
+# 注意：真实订阅 URL 必须通过环境变量 / EnvironmentFile 注入，绝不要出现在 crontab。

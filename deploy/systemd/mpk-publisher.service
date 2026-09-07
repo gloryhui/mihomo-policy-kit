@@ -1,0 +1,37 @@
+# mihomo-policy-kit Publisher - systemd service (V0.2)
+#
+# 生产部署样例：不要把用户真实 Secret 写进 unit 文件。
+# MPK_SOURCE_URL 等凭据放在权限受限的 EnvironmentFile（建议 0600），
+# 由 systemd 注入；unit 本身只包含占位符。
+#
+# 安装：
+#   sudo cp deploy/systemd/mpk-publisher.service /etc/systemd/system/
+#   sudo cp deploy/systemd/mpk-publisher.timer  /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mpk-publisher.timer
+#
+# 说明：MPK build -> publish 是短任务，不需要常驻服务；
+# timer 到点执行一次 build + publish，失败不影响 current。
+
+[Unit]
+Description=mihomo-policy-kit publisher (build + publish)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 以最小权限用户运行（部署时创建专用用户，不要用 root）
+User=mpk
+Group=mpk
+# EnvironmentFile 只含占位符；真实值由部署者在服务器本地填写并 chmod 600
+EnvironmentFile=-/etc/mihomo-policy-kit/env
+# 运行目录
+WorkingDirectory=/opt/mihomo-policy-kit
+# 构建并发布：build 成功且 publish 校验通过后才会切换 current
+ExecStart=/opt/mihomo-policy-kit/bin/mpk build
+ExecStart=/opt/mihomo-policy-kit/bin/mpk publish /opt/mihomo-policy-kit/dist/mihomo.yaml
+# 失败不影响 current（publish 校验失败不会 promotion）
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

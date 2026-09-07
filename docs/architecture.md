@@ -212,18 +212,20 @@ v0.1 提供两种模式。
 
 `dist/` 永远视为敏感产物目录，不提交 Git。
 
-v0.1 只输出：
+v0.1 输出：
 
 ```text
 dist/mihomo.yaml
 ```
 
-V0.2（**尚未实现**）计划采用：
+V0.2 已实现 Publisher（见 `docs/publisher.md`）：
 
 ```text
-builds/<build-id>/mihomo.yaml
-current -> builds/<build-id>
-previous -> builds/<previous-build-id>
+builds/<build-id>/mihomo.yaml + metadata.json   # immutable 版本
+current/mihomo.yaml                            # 当前成功版本视图
+previous/mihomo.yaml                           # 切换前版本视图
+public/sub/<token>/ -> ../../../../current     # token 视图（目录 symlink）
+token-state/<fingerprint>.json                 # token 元数据
 ```
 
 对客户端暴露稳定 URL：
@@ -232,17 +234,30 @@ previous -> builds/<previous-build-id>
 /sub/<token>/mihomo.yaml
 ```
 
-只有新构建完整通过校验后才切换 `current`。
+- 只有新构建完整通过校验后才切换 `current`。
+- 发布失败 / 校验失败 / rollback 失败都不会让 current 指向半成品。
+- 多 token 通过目录 symlink 跟随统一 current，promotion / rollback 对所有 token 一致。
+- 生产运行目标是 Linux + Nginx；Windows 只跑 Ruby 纯逻辑 / 单元测试。
 
 ## 10. 安全
 
 - 真实订阅 URL 只通过 `MPK_SOURCE_URL` 环境变量注入
 - 构建日志与异常消息不打印真实 URL / Token
 - 公开仓库不提交 `dist/`、`vendor/` 上游脚本、`config/config.yaml`、`rules/custom.list`
+- V0.2：订阅 token 是 bearer secret，位于 URL path；Nginx access log 不得记录
+  token-bearing URI（`access_log off` + `log_not_found off`）
+- V0.2：publish root（`runtime/`）全部被 `.gitignore` 排除，build / token /
+  发布状态不进入公开仓库
+- V0.2：完整 token 只在 `token create` 一次性输出；`token list` 只显示 fingerprint
 
 ## 11. 测试策略
 
 - Ruby 单元测试：`test/test_overlay.rb`、`test/test_build_helpers.rb`
+- Publisher 纯逻辑：`test/publisher/test_build_id.rb`、`test/publisher/test_token.rb`
+- Publisher 主流程：`test/publisher/test_publisher.rb`（publish / rollback / 幂等 / 失败路径）
+- Secret 回归：`test/publisher/test_publisher_secret.rb`（`VERY_SECRET_PUBLISH_TOKEN_123`）
+- Nginx 示例确定性文本回归：`test/publisher/test_nginx_example.rb`
+- Publisher Linux 集成：`test/publisher/test_publisher_integration.rb`（symlink / atomic rename）
 - Provider wrapper 离线测试：`test/providers/test_smart_config_kit.sh`（fake upstream，不出网）
 - 离线端到端：`test/test_e2e_offline.rb`（fixture -> provider -> overlay -> validate -> output）
 - 真实订阅 smoke：`scripts/smoke_test.ps1`（人工执行，不进入 CI）

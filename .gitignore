@@ -23,3 +23,8 @@ vendor/*
 .DS_Store
 .idea/
 .vscode/
+
+# Publisher runtime (V0.2, gitignored: builds / current / previous / tokens / state)
+/runtime/*
+!/runtime/.gitkeep
+
