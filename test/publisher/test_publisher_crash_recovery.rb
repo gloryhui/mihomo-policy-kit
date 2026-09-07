@@ -8,7 +8,7 @@ require_relative '../../lib/overlay'
 require_relative '../../lib/publisher/publisher'
 
 # 进程中途崩溃自愈回归测试（Sol Review P0 两轮；新原子性设计）。
-# 共享 current pointer 设计的崩溃回归：
+# immutable state-set / active pointer 设计的崩溃回归：
 #   - commit_build 中途崩溃：遗留 .build-staging-*，init! 清理，builds/ 不受污染
 #   - current pointer rename 前后：所有 token 无需 reconcile 就天然同时解析旧/新 build
 class PublisherCrashRecoveryTest < Minitest::Test
@@ -93,32 +93,59 @@ class PublisherCrashRecoveryTest < Minitest::Test
     assert_equal a_id, @pub.status[:previous]
   end
 
-  # 模拟切换前崩溃：current 仍指向 B，两个稳定 token 都天然解析 B；不需要 reconcile。
-  def test_crash_before_current_pointer_switch_keeps_all_tokens_on_old_build
-    a_id, b_id = two_version_state
+  def two_token_urls
     phone = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
     laptop = @pub.create_token('laptop', public_base_url: 'https://sub.example.invalid')
-    urls = [phone, laptop].map { |token| File.join(runtime_root, 'public', 'sub', token[:token], 'mihomo.yaml') }
-
-    assert_equal [File.binread(File.join(builds_dir, b_id, 'mihomo.yaml'))] * 2, urls.map { |url| File.binread(url) }
-    # “崩溃”发生在 final current rename 之前：无需 init!，共享 current 仍是 B。
-    assert_equal b_id, @pub.runtime.current_build_id
-    assert_equal [File.binread(urls[0])] * 2, urls.map { |url| File.binread(url) }
+    [phone, laptop].map { |token| File.join(runtime_root, 'public', 'sub', token[:token], 'mihomo.yaml') }
   end
 
-  # 模拟 final current pointer rename 完成后立即崩溃：两个 token 共享同一 symlink，
-  # 在不调用 init!/reconcile 的情况下已经同时解析 A。
-  def test_crash_after_current_pointer_switch_keeps_all_tokens_on_new_build
+  def assert_state_and_two_tokens(current, previous, urls)
+    @pub.init! # Simulates restart: no publish/reconcile is allowed to repair state.
+    assert_equal current, @pub.status[:current]
+    assert_equal previous, @pub.status[:previous]
+    expected = File.binread(File.join(builds_dir, current, 'mihomo.yaml'))
+    assert_equal [expected, expected], urls.map { |url| File.binread(url) }
+  end
+
+  # B/A -> publish C: state C/B can be fully prepared, but before the single active
+  # rename a crash leaves active B/A untouched after restart.
+  def test_publish_crash_before_active_commit_preserves_b_a
     a_id, b_id = two_version_state
-    phone = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
-    laptop = @pub.create_token('laptop', public_base_url: 'https://sub.example.invalid')
-    urls = [phone, laptop].map { |token| File.join(runtime_root, 'public', 'sub', token[:token], 'mihomo.yaml') }
+    urls = two_token_urls
+    c = @pub.publish(write_yaml('C', 9443))
+    @pub.runtime.send(:activate_state_set, @pub.runtime.send(:create_state_set, b_id, a_id))
+    @pub.runtime.send(:create_state_set, c[:build_id], b_id) # prepared, never activated
 
-    @pub.runtime.send(:replace_pointer, @pub.runtime.current_dir, a_id)
+    assert_state_and_two_tokens(b_id, a_id, urls)
+  end
 
-    assert_equal a_id, @pub.runtime.current_build_id
-    assert_equal [File.binread(File.join(builds_dir, a_id, 'mihomo.yaml'))] * 2, urls.map { |url| File.binread(url) }
-    refute_equal b_id, @pub.runtime.current_build_id
+  # B/A -> rollback: A/B is prepared but not committed; restart remains B/A.
+  def test_rollback_crash_before_active_commit_preserves_b_a
+    a_id, b_id = two_version_state
+    urls = two_token_urls
+    @pub.runtime.send(:create_state_set, a_id, b_id) # prepared rollback state, never activated
+
+    assert_state_and_two_tokens(b_id, a_id, urls)
+  end
+
+  # Once active rename completes, restart observes the entire publish pair C/B.
+  def test_publish_crash_after_active_commit_preserves_c_b
+    a_id, b_id = two_version_state
+    urls = two_token_urls
+    c = @pub.publish(write_yaml('C', 9443))
+    @pub.runtime.send(:activate_state_set, @pub.runtime.send(:create_state_set, c[:build_id], b_id))
+
+    assert_state_and_two_tokens(c[:build_id], b_id, urls)
+    refute_equal a_id, @pub.status[:previous]
+  end
+
+  # Once active rename completes, restart observes the entire rollback pair A/B.
+  def test_rollback_crash_after_active_commit_preserves_a_b
+    a_id, b_id = two_version_state
+    urls = two_token_urls
+    @pub.runtime.send(:activate_state_set, @pub.runtime.send(:create_state_set, a_id, b_id))
+
+    assert_state_and_two_tokens(a_id, b_id, urls)
   end
 
 end

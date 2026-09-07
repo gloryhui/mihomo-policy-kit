@@ -79,7 +79,7 @@ mihomo-policy-kit 负责：
 ### 输出
 
 - `dist/mihomo.yaml`（仅 Mihomo YAML）
-- V0.2 Publisher：`builds/<build-id>/mihomo.yaml`（immutable 版本）、共享 `current` / `previous` symlink 状态指针（`current` 的原子替换同时切换所有 token）、
+- V0.2 Publisher：`builds/<build-id>/mihomo.yaml`（immutable 版本）、immutable state-set + 单一原子 `active` 指针（完整 `{current, previous}` 一次切换）、
   `/sub/<token>/mihomo.yaml` 稳定 HTTPS 订阅 URL（多 Token，可独立吊销）
 
 ### 当前主要兼容客户端
@@ -354,7 +354,7 @@ ruby test/publisher/test_publisher_crash_recovery.rb
 ruby test/publisher/test_publisher_staging_atomicity.rb
 ruby test/publisher/test_nginx_example.rb
 
-# Publisher integration（真实 token URL / 共享 current 原子指针；Linux 运行）
+# Publisher integration（真实 token URL / immutable state-set active 指针；Linux 运行）
 ruby test/publisher/test_publisher_integration.rb
 
 # Provider wrapper 离线测试（需要 bash）

@@ -8,25 +8,26 @@ require_relative 'build_id'
 
 module MPK
   module Publisher
-    # Publisher 运行目录。build 是 immutable；所有公开 token 目录都稳定地指向
-    # 同一个 current symlink，因此一次 current 指针替换同时切换所有 token。
+    # Immutable build + immutable state-set runtime.
     #
-    #   builds/<build-id>/mihomo.yaml + metadata.json  # immutable，staging 后原子进入
-    #   current -> builds/<build-id>                   # 唯一的公开 active pointer
-    #   previous -> builds/<build-id>                  # rollback 目标
-    #   public/sub/<token> -> ../../current            # 稳定 token symlink（完整高熵 token）
+    #   builds/<build-id>/...                         # complete immutable artifacts
+    #   states/<state-id>/{state.json,current,previous} # immutable {current,previous} pair
+    #   active -> states/<state-id>                    # single atomic state commit point
+    #   public/sub/<token> -> ../../active/current     # stable full-token URL view
     #
-    # current 的 tmp symlink + rename 是唯一影响客户端的切换点。无论 promotion、
-    # rollback 或切换后崩溃，所有 token 都由同一 current 解析，天然同时得到旧或新
-    # immutable build；不需要逐 token reconcile。
+    # A new state-set is complete before it is made active. Replacing active with one
+    # symlink rename therefore switches current and previous together, and every token
+    # resolves through exactly that same point.
     class Runtime
       BUILDS_DIR = 'builds'
+      STATES_DIR = 'states'
+      ACTIVE_LINK = 'active'
       CURRENT_LINK = 'current'
       PREVIOUS_LINK = 'previous'
       PUBLIC_DIR = 'public'
       SUB_DIR = 'sub'
       CURRENT_VIEW = 'mihomo.yaml'
-      STAGING_PREFIXES = ['.build-staging-', '.pointer-staging-'].freeze
+      STAGING_PREFIXES = ['.build-staging-', '.state-staging-', '.active-staging-', '.token-staging-'].freeze
 
       attr_reader :root
 
@@ -35,34 +36,28 @@ module MPK
       end
 
       def builds_dir = File.join(@root, BUILDS_DIR)
-      def current_dir = File.join(@root, CURRENT_LINK)
-      def previous_dir = File.join(@root, PREVIOUS_LINK)
+      def states_dir = File.join(@root, STATES_DIR)
+      def active_dir = File.join(@root, ACTIVE_LINK)
+      def current_dir = File.join(active_dir, CURRENT_LINK)
+      def previous_dir = File.join(active_dir, PREVIOUS_LINK)
       def current_yaml = File.join(current_dir, CURRENT_VIEW)
       def previous_yaml = File.join(previous_dir, CURRENT_VIEW)
       def public_dir = File.join(@root, PUBLIC_DIR)
       def sub_dir = File.join(public_dir, SUB_DIR)
 
       def init!
-        [builds_dir, public_dir, sub_dir].each { |dir| FileUtils.mkdir_p(dir) }
+        [builds_dir, states_dir, public_dir, sub_dir].each { |dir| FileUtils.mkdir_p(dir) }
         cleanup_stale_staging!
         @root
       end
 
       def initialized?
-        File.directory?(builds_dir) && File.directory?(public_dir) && File.directory?(sub_dir)
+        [builds_dir, states_dir, public_dir, sub_dir].all? { |dir| File.directory?(dir) }
       end
 
-      def build_dir(build_id)
-        File.join(builds_dir, build_id)
-      end
-
-      def build_yaml(build_id)
-        File.join(build_dir(build_id), CURRENT_VIEW)
-      end
-
-      def build_metadata_path(build_id)
-        File.join(build_dir(build_id), 'metadata.json')
-      end
+      def build_dir(build_id) = File.join(builds_dir, build_id)
+      def build_yaml(build_id) = File.join(build_dir(build_id), CURRENT_VIEW)
+      def build_metadata_path(build_id) = File.join(build_dir(build_id), 'metadata.json')
 
       def build_metadata(build_id)
         path = build_metadata_path(build_id)
@@ -73,7 +68,6 @@ module MPK
         nil
       end
 
-      # YAML、metadata、build_id 和 SHA256 都必须吻合才是可引用 build。
       def build_exists?(build_id)
         id = build_id.to_s
         return false if id.empty? || id.start_with?('.')
@@ -87,7 +81,7 @@ module MPK
         Dir.children(builds_dir).select { |id| build_exists?(id) }.sort
       end
 
-      # 完整内容在 root 下隐藏 staging 写入并校验，再一次 rename 进入 builds。
+      # Artifacts become visible in builds only via one same-filesystem directory rename.
       def commit_build(build_id, content_yaml, metadata)
         return build_id if build_exists?(build_id)
 
@@ -106,47 +100,59 @@ module MPK
         build_id
       end
 
-      # current/previous 从各自 symlink 的受控 targets 解析；损坏/悬空 pointer 不被采信。
-      def current_build_id = pointer_build_id(current_dir)
-      def previous_build_id = pointer_build_id(previous_dir)
+      # The pair comes from one active immutable state-set, never two independently
+      # mutable pointers. Invalid/corrupt active targets are treated as no state.
+      def active_state
+        state = active_state_dir
+        return { 'current' => nil, 'previous' => nil } unless state
+
+        payload = JSON.parse(File.read(File.join(state, 'state.json'), encoding: 'UTF-8'))
+        current = payload['current']
+        previous = payload['previous']
+        return { 'current' => nil, 'previous' => nil } unless build_exists?(current)
+        return { 'current' => nil, 'previous' => nil } if previous && !build_exists?(previous)
+        return { 'current' => nil, 'previous' => nil } unless state_pointer_matches?(state, CURRENT_LINK, current)
+        return { 'current' => nil, 'previous' => nil } if previous && !state_pointer_matches?(state, PREVIOUS_LINK, previous)
+        return { 'current' => nil, 'previous' => nil } if previous.nil? && File.exist?(File.join(state, PREVIOUS_LINK))
+
+        { 'current' => current, 'previous' => previous }
+      rescue JSON::ParserError, TypeError, SystemCallError
+        { 'current' => nil, 'previous' => nil }
+      end
+
+      def current_build_id = active_state['current']
+      def previous_build_id = active_state['previous']
       def current_exists? = !current_build_id.nil?
       def previous_exists? = !previous_build_id.nil?
 
-      # 所有 token 共享 current。previous 先替换，最后以一次 current symlink rename
-      # 对客户端全局生效；若 final rename 失败则恢复 previous，current 从未改变。
       def promote!(build_id)
         raise MPK::Error, "build does not exist: #{build_id}" unless build_exists?(build_id)
 
-        switch_current!(build_id, current_build_id)
+        before = active_state
+        state_id = create_state_set(build_id, before['current'])
+        activate_state_set(state_id)
         build_id
       end
 
       def rollback!
-        current = current_build_id
-        previous = previous_build_id
-        raise MPK::Error, 'nothing to roll back: no previous build' unless previous
+        before = active_state
+        raise MPK::Error, 'nothing to roll back: no previous build' unless before['previous']
 
-        switch_current!(previous, current)
-        previous
+        state_id = create_state_set(before['previous'], before['current'])
+        activate_state_set(state_id)
+        before['previous']
       end
 
-      def token_view_dir(token)
-        File.join(sub_dir, token.to_s)
-      end
+      def token_view_dir(token) = File.join(sub_dir, token.to_s)
+      def subscription_yaml(token) = File.join(token_view_dir(token), CURRENT_VIEW)
 
-      def subscription_yaml(token)
-        File.join(token_view_dir(token), CURRENT_VIEW)
-      end
-
-      # token symlink 本身只在 create/revoke 改动。其 target 永远是 ../../current，
-      # 所有 token 不参与 publish/rollback 的 N 次复制操作。
+      # Token links are stable after creation; only active changes during promotion.
       def create_token_view(token)
         raise MPK::Error, 'cannot create token view: no current build' unless current_exists?
 
-        target = File.join('..', '..', CURRENT_LINK)
         link = token_view_dir(token)
         tmp = File.join(sub_dir, ".token-staging-#{SecureRandom.hex(6)}")
-        File.symlink(target, tmp)
+        File.symlink(File.join('..', '..', ACTIVE_LINK, CURRENT_LINK), tmp)
         atomic_rename(tmp, link)
         true
       rescue NotImplementedError, SystemCallError
@@ -186,57 +192,73 @@ module MPK
         false
       end
 
-      # 只接受 current/previous -> builds/<single-build-id>，防止指针逃逸 runtime。
-      def pointer_build_id(pointer)
-        return nil unless File.symlink?(pointer)
+      def active_state_dir
+        return nil unless File.symlink?(active_dir)
 
-        target = File.realpath(pointer)
-        return nil unless File.dirname(target) == File.realpath(builds_dir)
+        target = File.realpath(active_dir)
+        return nil unless File.dirname(target) == File.realpath(states_dir)
+        return nil unless File.directory?(target)
 
-        id = File.basename(target)
-        build_exists?(id) ? id : nil
+        target
       rescue SystemCallError
         nil
       end
 
-      # 后一个参数是新 previous。只有 current pointer 决定公开内容，且它总是最后
-      # 原子替换。previous 恢复失败不会删除/影响 current，原始错误仍会抛给调用者。
-      def switch_current!(new_current, new_previous)
-        original_previous = previous_build_id
-        previous_changed = false
+      def state_pointer_matches?(state_dir, name, build_id)
+        pointer = File.join(state_dir, name)
+        return false unless File.symlink?(pointer)
+
+        File.realpath(pointer) == File.realpath(build_dir(build_id))
+      rescue SystemCallError
+        false
+      end
+
+      # State directory is immutable and fully validated before active is touched.
+      def create_state_set(current, previous)
+        raise MPK::Error, "build does not exist: #{current}" unless build_exists?(current)
+        raise MPK::Error, "build does not exist: #{previous}" if previous && !build_exists?(previous)
+
+        state_id = SecureRandom.hex(16)
+        staging = state_staging_dir
         begin
-          if new_previous
-            replace_pointer(previous_dir, new_previous)
-            previous_changed = true
-          else
-            remove_pointer(previous_dir)
-          end
-          replace_pointer(current_dir, new_current)
-        rescue StandardError => error
-          restore_pointer(previous_dir, original_previous) if previous_changed || original_previous
-          raise error
+          FileUtils.mkdir_p(staging)
+          write_state_pointer(staging, CURRENT_LINK, current)
+          write_state_pointer(staging, PREVIOUS_LINK, previous) if previous
+          File.write(File.join(staging, 'state.json'), JSON.pretty_generate('current' => current, 'previous' => previous))
+          raise MPK::Error, 'state staging incomplete' unless valid_state_set?(staging, current, previous)
+
+          atomic_rename(staging, File.join(states_dir, state_id))
+          staging = nil
+          state_id
+        ensure
+          FileUtils.rm_rf(staging) if staging && File.exist?(staging)
         end
       end
 
-      # 同文件系统 tmp symlink -> rename。替换 current 时这是唯一全局公开切换点。
-      def replace_pointer(pointer, build_id)
-        raise MPK::Error, "build does not exist: #{build_id}" unless build_exists?(build_id)
+      def valid_state_set?(dir, current, previous)
+        payload = JSON.parse(File.read(File.join(dir, 'state.json'), encoding: 'UTF-8'))
+        payload['current'] == current && payload['previous'] == previous &&
+          state_pointer_matches?(dir, CURRENT_LINK, current) &&
+          (!previous || state_pointer_matches?(dir, PREVIOUS_LINK, previous)) &&
+          (previous || !File.exist?(File.join(dir, PREVIOUS_LINK)))
+      rescue JSON::ParserError, TypeError, SystemCallError
+        false
+      end
 
-        tmp = staging_dir('.pointer-staging-')
-        File.symlink(File.join(BUILDS_DIR, build_id), tmp)
-        atomic_rename(tmp, pointer)
+      def write_state_pointer(dir, name, build_id)
+        File.symlink(File.join('..', '..', BUILDS_DIR, build_id), File.join(dir, name))
+      end
+
+      # The one and only commit point for the full {current, previous} transaction.
+      def activate_state_set(state_id)
+        state = File.join(states_dir, state_id)
+        raise MPK::Error, "state does not exist: #{state_id}" unless File.directory?(state)
+
+        tmp = staging_dir('.active-staging-')
+        File.symlink(File.join(STATES_DIR, state_id), tmp)
+        atomic_rename(tmp, active_dir)
       ensure
         FileUtils.rm_rf(tmp) if tmp && File.exist?(tmp)
-      end
-
-      def restore_pointer(pointer, build_id)
-        build_id ? replace_pointer(pointer, build_id) : remove_pointer(pointer)
-      rescue StandardError
-        # Preserve the original switch exception. current remains a complete immutable build.
-      end
-
-      def remove_pointer(pointer)
-        FileUtils.rm_f(pointer) if File.symlink?(pointer) || File.file?(pointer)
       end
 
       def atomic_rename(source, target)
@@ -245,10 +267,15 @@ module MPK
 
       def cleanup_stale_staging!
         STAGING_PREFIXES.each do |prefix|
-          Dir.glob(File.join(@root, "#{prefix}*")).each do |path|
+          base = prefix == '.state-staging-' ? states_dir : @root
+          Dir.glob(File.join(base, "#{prefix}*")).each do |path|
             FileUtils.rm_rf(path) if File.exist?(path)
           end
         end
+      end
+
+      def state_staging_dir
+        File.join(states_dir, ".state-staging-#{SecureRandom.hex(6)}")
       end
 
       def staging_dir(prefix)

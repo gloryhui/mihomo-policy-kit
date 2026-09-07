@@ -7,7 +7,7 @@ require_relative '../../lib/overlay'
 require_relative '../../lib/publisher/publisher'
 
 # Publisher integration test（Issue #11 03/04/08 + Sol Review P0 两轮）。
-# Linux 生产布局使用稳定 token symlink -> 共享 current symlink；Windows 无 symlink 权限时整组跳过。
+# Linux 生产布局使用稳定 token symlink -> 共享 active/current symlink；Windows 无 symlink 权限时整组跳过。
 # 额外覆盖 Sol 第二轮要求：promotion / rollback 的每个内部步骤之间真实读取
 # public/sub/<token>/mihomo.yaml，断言始终存在、可读、内容只能是 old 或 new。
 class ObservingRuntime < MPK::Publisher::Runtime
@@ -80,7 +80,7 @@ class PublisherIntegrationTest < Minitest::Test
   end
 
   # 真实 filesystem 集成（Sol Review P0 #1 / #2）：
-  # token URL 由 public/sub/<完整 token> 稳定 symlink 解析到共享 current，
+  # token URL 由 public/sub/<完整 token> 稳定 symlink 解析到共享 active/current，
   # promotion / rollback 后仍跟随；revoke 后该实际 URL 路径消失，其他 token 仍可读。
   def test_real_token_url_path_follows_current_rollback_and_revoke
     first = @pub.publish(write_yaml('A', 443))
@@ -138,7 +138,7 @@ class PublisherIntegrationTest < Minitest::Test
 
     file = File.join(@dir, 'runtime', 'public', 'sub', t1[:token], 'mihomo.yaml')
     assert File.file?(file), 'token URL must resolve to a readable YAML file'
-    assert File.symlink?(File.dirname(file)), 'token directory must be a stable symlink to shared current'
+    assert File.symlink?(File.dirname(file)), 'token directory must be a stable symlink to shared active/current'
   end
 
   # Sol 第二轮 P0 核心：promote 全程每个内部步骤之间，token URL 恒存在、可读、

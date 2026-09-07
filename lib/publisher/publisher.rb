@@ -114,7 +114,7 @@ module MPK
         }
       end
 
-      # 创建 token 并建立公开视图：public/sub/<完整 token>/mihomo.yaml（稳定 symlink 跟随共享 current）。
+      # 创建 token 并建立公开视图：public/sub/<完整 token>/mihomo.yaml（稳定 symlink 跟随 active/current）。
       # 完整 token 只在本方法返回值中一次性出现；token-state 是私有敏感数据，
       # 记录完整 token 用于 filesystem 视图管理（revoke 精确删除），
       # 但普通 list / status / 日志不得输出。

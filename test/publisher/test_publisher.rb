@@ -209,7 +209,7 @@ class PublisherTest < Minitest::Test
 
   def test_token_create_failure_rolls_back_record
     # 尚无 current build 时，create_token 应报错且不留孤儿 token 记录。
-    # （共享 current 的 symlink 布局中，失败发生在无 current 等场景）
+    # （共享 active state-set 的 symlink 布局中，失败发生在无 current 等场景）
     error = assert_raises(MPK::Error) do
       @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
     end
