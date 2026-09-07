@@ -16,7 +16,7 @@ class NginxExampleTest < Minitest::Test
 
   def test_contains_token_location_with_access_log_off
     # 订阅 token 位于 URL path，access log 必须关闭（P0 安全项）
-    assert_match(%r{location ~ \^/sub/\[A-Za-z0-9_-\]\{20,\}/mihomo\\\.yaml\$}, conf)
+    assert_match(%r{location ~ "?\^/sub/\[A-Za-z0-9_\-\]\{20,\}/mihomo\\\.yaml\$"?}, conf)
     assert_includes conf, 'access_log off'
   end
 

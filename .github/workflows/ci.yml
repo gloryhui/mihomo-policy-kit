@@ -87,11 +87,24 @@ jobs:
       - name: Nginx config syntax (if nginx available)
         run: |
           if command -v nginx >/dev/null 2>&1; then
-            # 示例文件是 server 块片段；包一层 http 块做 nginx -t 语法验证
-            sed 's/<YOUR-DOMAIN>/example.invalid/g; s#<YOUR-CERT-PATH>#/tmp#g' \
+            # 示例文件是 server 块片段；包一层 events/http 块做 nginx -t 语法验证。
+            # 使用临时 prefix 避免污染系统 error_log / pid 路径。
+            mkdir -p /tmp/mpk-nginx-prefix/logs
+            # nginx -t 会实际加载证书：生成占位自签名证书用于语法验证（非生产）
+            openssl req -x509 -newkey rsa:2048 -keyout /tmp/mpk-nginx-prefix/privkey.pem \
+              -out /tmp/mpk-nginx-prefix/fullchain.pem -days 1 -nodes \
+              -subj '/CN=example.invalid' >/dev/null 2>&1
+            sed 's/<YOUR-DOMAIN>/example.invalid/g; s#<YOUR-CERT-PATH>#/tmp/mpk-nginx-prefix#g' \
               deploy/nginx/mihomo-subscription.conf.example > /tmp/mpk-server.conf
-            { echo 'events {}'; echo 'http {'; cat /tmp/mpk-server.conf; echo '}'; } > /tmp/mpk-nginx-test.conf
-            nginx -t -c /tmp/mpk-nginx-test.conf
+            {
+              echo "pid /tmp/mpk-nginx-prefix/nginx.pid;"
+              echo "error_log /tmp/mpk-nginx-prefix/logs/error.log;"
+              echo 'events {}'
+              echo 'http {'
+              cat /tmp/mpk-server.conf
+              echo '}'
+            } > /tmp/mpk-nginx-test.conf
+            nginx -t -p /tmp/mpk-nginx-prefix -c /tmp/mpk-nginx-test.conf
           else
             echo "nginx not found; skipping nginx -t (deterministic text check only)"
             grep -q 'access_log off' deploy/nginx/mihomo-subscription.conf.example

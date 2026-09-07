@@ -46,7 +46,7 @@ server {
     # 订阅稳定 URL：/sub/<token>/mihomo.yaml
     # token 是 bearer secret：该 location 的 access log 必须关闭，
     # 否则每次客户端定时更新都会把完整 token URI 写进日志。
-    location ~ ^/sub/[A-Za-z0-9_-]{20,}/mihomo\.yaml$ {
+    location ~ "^/sub/[A-Za-z0-9_-]{20,}/mihomo\.yaml$" {
         access_log off;        # 关键：token-bearing URI 不进 access log
         log_not_found off;
         try_files $uri =404;
