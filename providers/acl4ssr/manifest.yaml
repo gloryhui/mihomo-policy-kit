@@ -1,0 +1,9 @@
+id: acl4ssr
+input_format: mihomo-yaml
+output_format: mihomo-yaml
+runner:
+  kind: ruby
+  entrypoint: provider.rb
+group_map: groups.yaml
+options:
+  rules_url: https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Providers/Ruleset/LocalAreaNetwork.list

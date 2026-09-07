@@ -4,7 +4,7 @@
 
 它不试图重新发明一套分流规则，而是把优秀的上游分流项目当作 Provider，再叠加你自己的规则、校验与发布流程，最终生成一份可直接被 Clash Party、Clash Verge Rev、Nikki、Clash Meta / ClashMi 等 Mihomo 客户端订阅的 `mihomo.yaml`。
 
-> 当前阶段：**v0.2**。v0.1 已完成 Smart-Config-Kit **Normal / 非 Smart** 构建链路与真实客户端验收；
+> 当前阶段：**v0.3**。v0.1 已完成 Smart-Config-Kit **Normal / 非 Smart** 构建链路与真实客户端验收；
 > v0.2 增加私有 HTTPS 订阅发布器（immutable builds / current / previous / rollback / 多 Token）。
 
 ## 为什么做这个项目
@@ -23,7 +23,7 @@
 ```text
 机场原始订阅
       ↓
-Provider（当前：Smart-Config-Kit Normal）
+Provider（Smart-Config-Kit Normal / ACL4SSR）
       ↓
 统一 Mihomo 配置
       ↓
@@ -65,6 +65,10 @@ mihomo-policy-kit 负责：
 当前 Provider：
 
 - `smart-config-kit`：使用 `OpenClash/OpenClash(mihomo).sh`，即 Normal / 非 Smart 版本
+- `acl4ssr`：保留机场节点并生成 ACL4SSR 兼容的 Mihomo 策略组与官方 raw rule-provider 引用
+
+Provider 通过各自目录下的 `manifest.yaml` 声明输入/输出格式、runner、group map 与选项；主构建器不包含 Provider 专有分支。选择 Provider 只需修改
+`config/config.yaml` 的 `provider` 字段，用户规则仍使用 `ai`、`global`、`us` 等逻辑 target。
 
 上游项目：<https://github.com/IvanSolis1989/Smart-Config-Kit>
 
@@ -385,6 +389,8 @@ mihomo-policy-kit/
 ├── lib/
 │   ├── build_helpers.rb
 │   ├── overlay.rb
+│   ├── provider_manifest.rb
+│   ├── provider_runner.rb
 │   └── publisher/
 │       ├── build_id.rb
 │       ├── runtime.rb
@@ -392,8 +398,14 @@ mihomo-policy-kit/
 │       ├── validator.rb
 │       └── publisher.rb
 ├── providers/
-│   └── smart-config-kit/
-│       └── provider.sh
+│   ├── smart-config-kit/
+│   │   ├── manifest.yaml
+│   │   ├── groups.yaml
+│   │   └── provider.sh
+│   └── acl4ssr/
+│       ├── manifest.yaml
+│       ├── groups.yaml
+│       └── provider.rb
 ├── rules/
 │   └── custom.example.list
 ├── deploy/
@@ -469,7 +481,9 @@ mihomo-policy-kit/
 
 ### v0.3+
 
-- [ ] ACL4SSR Provider
+- [x] Provider manifest 与 generic runner
+- [x] ACL4SSR Provider（官方 raw rule-provider 引用）
+- [x] 双 Provider 离线 E2E 与逻辑 target 映射
 - [ ] 其他社区分流 Provider
 - [ ] Stash 输出
 - [ ] Loon / Surge / Shadowrocket 输出

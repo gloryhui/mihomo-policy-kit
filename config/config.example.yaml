@@ -1,6 +1,6 @@
 version: 1
 
-provider: smart-config-kit
+provider: smart-config-kit # or acl4ssr
 
 source:
   # 推荐把真实机场订阅放进环境变量，避免泄漏到 Git。
@@ -15,6 +15,9 @@ provider_options:
     remote_url: https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/OpenClash/OpenClash%28mihomo%29.sh
     # 当前项目只支持 Normal / 非 Smart 版本。
     forbid_smart: true
+  acl4ssr:
+    # ACL4SSR consumes official raw rule-provider artifacts; no online converter is used.
+    rules_url: https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Providers/Ruleset/LocalAreaNetwork.list
 
 custom_rules:
   files:
@@ -23,7 +26,8 @@ custom_rules:
   allow_missing: true
 
 groups:
-  map_file: ./config/groups.smart-config-kit.yaml
+  # Optional override. Omit to use the selected Provider manifest's group map.
+  map_file: null
 
 patches:
   # 删除机场订阅顶层 global-client-fingerprint，保留各节点自身 client-fingerprint。

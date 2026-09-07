@@ -25,6 +25,9 @@ jobs:
         run: |
           ruby -c lib/overlay.rb
           ruby -c lib/build_helpers.rb
+          ruby -c lib/provider_manifest.rb
+          ruby -c lib/provider_runner.rb
+          ruby -c providers/acl4ssr/provider.rb
           ruby -c lib/publisher.rb
           ruby -c lib/publisher/build_id.rb
           ruby -c lib/publisher/runtime.rb
@@ -37,6 +40,7 @@ jobs:
           ruby -c test/test_overlay.rb
           ruby -c test/test_build_helpers.rb
           ruby -c test/test_e2e_offline.rb
+          ruby -c test/test_provider_manifest.rb
           ruby -c test/publisher/test_build_id.rb
           ruby -c test/publisher/test_token.rb
           ruby -c test/publisher/test_publisher.rb
@@ -72,6 +76,7 @@ jobs:
         run: |
           ruby test/test_overlay.rb
           ruby test/test_build_helpers.rb
+          ruby test/test_provider_manifest.rb
           ruby test/publisher/test_build_id.rb
           ruby test/publisher/test_token.rb
           ruby test/publisher/test_publisher.rb
@@ -202,12 +207,16 @@ jobs:
           ruby -c lib/publisher/validator.rb
           ruby -c lib/publisher/publisher.rb
           ruby -c scripts/publisher.rb
+          ruby -c lib/provider_manifest.rb
+          ruby -c lib/provider_runner.rb
+          ruby -c providers/acl4ssr/provider.rb
 
       - name: Ruby generic logic tests on Windows
         shell: pwsh
         run: |
           ruby test/test_overlay.rb
           ruby test/test_build_helpers.rb
+          ruby test/test_provider_manifest.rb
           ruby test/publisher/test_build_id.rb
           ruby test/publisher/test_token.rb
           # Shared-current Publisher filesystem semantics use Linux symlinks and run in linux.
