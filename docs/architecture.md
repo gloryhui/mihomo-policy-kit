@@ -224,8 +224,8 @@ V0.2 已实现 Publisher（见 `docs/publisher.md`）：
 builds/<build-id>/mihomo.yaml + metadata.json   # immutable 版本
 current/mihomo.yaml                            # 当前成功版本视图
 previous/mihomo.yaml                           # 切换前版本视图
-public/sub/<token>/ -> ../../../../current     # token 视图（目录 symlink）
-token-state/<fingerprint>.json                 # token 元数据
+public/sub/<token>/ -> ../../current           # token 视图（目录 symlink，名 = 完整 token）
+token-state/<fingerprint>.json                 # token 元数据（私有敏感，含完整 token）
 ```
 
 对客户端暴露稳定 URL：
@@ -256,8 +256,10 @@ token-state/<fingerprint>.json                 # token 元数据
 - Publisher 纯逻辑：`test/publisher/test_build_id.rb`、`test/publisher/test_token.rb`
 - Publisher 主流程：`test/publisher/test_publisher.rb`（publish / rollback / 幂等 / 失败路径）
 - Secret 回归：`test/publisher/test_publisher_secret.rb`（`VERY_SECRET_PUBLISH_TOKEN_123`）
+- 故障注入 / 崩溃自愈回归：`test/publisher/test_publisher_fault_injection.rb`、
+  `test/publisher/test_publisher_crash_recovery.rb`（promote/rollback 失败不破坏 current/previous）
 - Nginx 示例确定性文本回归：`test/publisher/test_nginx_example.rb`
-- Publisher Linux 集成：`test/publisher/test_publisher_integration.rb`（symlink / atomic rename）
+- Publisher Linux 集成：`test/publisher/test_publisher_integration.rb`（symlink / atomic rename / 真实 token URL 路径）
 - Provider wrapper 离线测试：`test/providers/test_smart_config_kit.sh`（fake upstream，不出网）
 - 离线端到端：`test/test_e2e_offline.rb`（fixture -> provider -> overlay -> validate -> output）
 - 真实订阅 smoke：`scripts/smoke_test.ps1`（人工执行，不进入 CI）

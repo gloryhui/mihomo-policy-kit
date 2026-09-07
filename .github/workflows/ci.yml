@@ -42,6 +42,8 @@ jobs:
           ruby -c test/publisher/test_publisher.rb
           ruby -c test/publisher/test_publisher_secret.rb
           ruby -c test/publisher/test_publisher_integration.rb
+          ruby -c test/publisher/test_publisher_fault_injection.rb
+          ruby -c test/publisher/test_publisher_crash_recovery.rb
 
       - name: Shell syntax
         run: |
@@ -73,6 +75,8 @@ jobs:
           ruby test/publisher/test_token.rb
           ruby test/publisher/test_publisher.rb
           ruby test/publisher/test_publisher_secret.rb
+          ruby test/publisher/test_publisher_fault_injection.rb
+          ruby test/publisher/test_publisher_crash_recovery.rb
           ruby test/publisher/test_nginx_example.rb
 
       - name: Provider wrapper fixture test
@@ -206,4 +210,6 @@ jobs:
           ruby test/publisher/test_token.rb
           ruby test/publisher/test_publisher.rb
           ruby test/publisher/test_publisher_secret.rb
+          ruby test/publisher/test_publisher_fault_injection.rb
+          ruby test/publisher/test_publisher_crash_recovery.rb
           ruby test/publisher/test_nginx_example.rb

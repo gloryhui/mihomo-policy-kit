@@ -305,7 +305,9 @@ V0.2 安全要点：
 
 - 订阅 token 位于 URL path，是 bearer secret；Nginx access log 必须关闭
   （示例 `deploy/nginx/mihomo-subscription.conf.example` 已配置 `access_log off` + `log_not_found off`）
+- 客户端 URL 中的完整高熵 token 与文件系统公开路径一致（`public/sub/<token>/`），静态 Nginx 可直接命中
 - 完整 token 只在 `token create` 一次性输出；`token list` 只显示 fingerprint
+- `token-state/` 是私有敏感数据（含完整 token，用于精确吊销），禁止提交仓库，备份须加密限权
 - 生产发布目标为 Linux + Nginx；HTTPS 是必需条件
 
 ### 本地真实订阅 Smoke Test
@@ -348,6 +350,8 @@ ruby test/publisher/test_build_id.rb
 ruby test/publisher/test_token.rb
 ruby test/publisher/test_publisher.rb
 ruby test/publisher/test_publisher_secret.rb
+ruby test/publisher/test_publisher_fault_injection.rb
+ruby test/publisher/test_publisher_crash_recovery.rb
 ruby test/publisher/test_nginx_example.rb
 
 # Publisher Linux 集成（symlink / atomic rename；Windows 跳过 symlink 断言）
@@ -416,6 +420,8 @@ mihomo-policy-kit/
 │   │   ├── test_token.rb
 │   │   ├── test_publisher.rb
 │   │   ├── test_publisher_secret.rb
+│   │   ├── test_publisher_fault_injection.rb
+│   │   ├── test_publisher_crash_recovery.rb
 │   │   ├── test_publisher_integration.rb
 │   │   ├── test_nginx_example.rb
 │   │   └── fixtures/

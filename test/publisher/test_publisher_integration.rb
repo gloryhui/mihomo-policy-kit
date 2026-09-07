@@ -7,7 +7,7 @@ require 'fileutils'
 require_relative '../../lib/overlay'
 require_relative '../../lib/publisher/publisher'
 
-# Publisher Linux integration test（Issue #11 03 / 04 / 08）。
+# Publisher Linux integration test（Issue #11 03/04/08 + Sol Review P0）。
 # 覆盖真实 symlink / atomic rename 行为、多 token 跟随 current、revoke 隔离。
 # Windows 上创建 symlink 需要权限，这里跳过 symlink 相关断言但保留纯逻辑检查。
 class PublisherIntegrationTest < Minitest::Test
@@ -45,12 +45,16 @@ class PublisherIntegrationTest < Minitest::Test
     path
   end
 
+  def current_yaml_path
+    File.join(@dir, 'runtime', 'current', 'mihomo.yaml')
+  end
+
   def test_first_publish_sets_current_with_no_previous
     @pub.publish(write_yaml('A', 443))
     assert_equal 1, @pub.status[:builds].length
     refute_nil @pub.status[:current]
     assert_nil @pub.status[:previous]
-    assert File.file?(File.join(@dir, 'runtime', 'current', 'mihomo.yaml'))
+    assert File.file?(current_yaml_path)
   end
 
   def test_second_publish_moves_old_to_previous
@@ -60,24 +64,47 @@ class PublisherIntegrationTest < Minitest::Test
     assert_equal first[:build_id], @pub.status[:previous]
   end
 
-  def test_two_tokens_follow_current_and_rollback
+  # 真实 filesystem 集成（Sol Review P0 #1）：
+  # 创建 token 后，public/sub/<完整 token>/mihomo.yaml 必须真实可读，且内容跟随 current；
+  # promotion / rollback 后仍跟随；revoke 后该实际 URL 路径消失，其他 token 仍可读。
+  def test_real_token_url_path_follows_current_rollback_and_revoke
     skip 'symlink unsupported on this platform' unless symlink_supported?
 
     first = @pub.publish(write_yaml('A', 443))
     t1 = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
     t2 = @pub.create_token('laptop', public_base_url: 'https://sub.example.invalid')
 
-    # 两个 token 都指向 current（第一个 build）
-    assert_equal first[:build_id], resolve_via_token(t1[:token])
-    assert_equal first[:build_id], resolve_via_token(t2[:token])
+    url1 = File.join(@dir, 'runtime', 'public', 'sub', t1[:token], 'mihomo.yaml')
+    url2 = File.join(@dir, 'runtime', 'public', 'sub', t2[:token], 'mihomo.yaml')
 
+    # token 目录 = 客户端 URL 中的完整高熵 token
+    assert File.file?(url1), 'token URL path must exist for static Nginx'
+    assert File.file?(url2)
+    refute_equal t1[:token], MPK::Publisher::TokenStore.fingerprint(t1[:token]),
+                 'public path must use the full token, not the short fingerprint'
+
+    # 内容跟随 current（A）
+    assert_equal File.binread(current_yaml_path), File.binread(url1)
+    assert_equal File.binread(current_yaml_path), File.binread(url2)
+
+    # promotion 到 B：两个 token 自动跟随新 current
     second = @pub.publish(write_yaml('B', 8443))
-    assert_equal second[:build_id], resolve_via_token(t1[:token])
-    assert_equal second[:build_id], resolve_via_token(t2[:token])
+    assert_equal second[:build_id], @pub.status[:current]
+    assert_equal File.binread(current_yaml_path), File.binread(url1)
+    assert_equal File.binread(current_yaml_path), File.binread(url2)
 
+    # rollback 回 A：token URL 路径仍可读并跟随 current
     @pub.rollback
-    assert_equal first[:build_id], resolve_via_token(t1[:token])
-    assert_equal first[:build_id], resolve_via_token(t2[:token])
+    assert_equal first[:build_id], @pub.status[:current]
+    assert_equal File.binread(current_yaml_path), File.binread(url1)
+    assert_equal File.binread(current_yaml_path), File.binread(url2)
+
+    # revoke phone：phone 的 URL 路径消失，laptop 仍可读
+    @pub.revoke_token('phone')
+    refute File.exist?(File.join(@dir, 'runtime', 'public', 'sub', t1[:token])),
+           'revoked token public path must be removed'
+    assert File.file?(url2), 'other token URL path must remain readable'
+    assert_equal File.binread(current_yaml_path), File.binread(url2)
   end
 
   def test_revoke_one_token_does_not_affect_other
@@ -91,7 +118,7 @@ class PublisherIntegrationTest < Minitest::Test
 
     assert_nil @pub.resolve_subscription(t1[:token]), 'revoked token should not resolve'
     refute_nil @pub.resolve_subscription(t2[:token]), 'other token still works'
-    assert @pub.runtime.token_view?(MPK::Publisher::TokenStore.fingerprint(t2[:token]))
+    assert @pub.runtime.token_view?(t2[:token]), 'other token public view still present'
   end
 
   def test_token_view_is_symlink_to_current
@@ -100,9 +127,8 @@ class PublisherIntegrationTest < Minitest::Test
     @pub.publish(write_yaml('A', 443))
     t1 = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
 
-    link = File.join(@dir, 'runtime', 'public', 'sub', t1[:fingerprint])
+    link = File.join(@dir, 'runtime', 'public', 'sub', t1[:token])
     assert File.symlink?(link), 'token view should be a symlink'
-    # 目标应指向 current（相对或绝对均解析到同一 build）
     target = File.realpath(link)
     current_real = File.realpath(File.join(@dir, 'runtime', 'current'))
     assert_equal current_real, target
@@ -124,22 +150,10 @@ class PublisherIntegrationTest < Minitest::Test
     first = @pub.publish(write_yaml('A', 443))
     good_current = @pub.status[:current]
 
-    # 模拟 promotion 失败：删除 builds 目录权限？更直接的做法是发布一个
-    # 校验通过的 artifact，但在 promote 阶段注入故障（通过删除 current 指向文件不可行，
-    # 这里验证“failed publish keeps current”核心语义：bad artifact 不改变 current）
     bad = File.join(@dir, 'bad.yaml')
     File.write(bad, '') # 空文件 -> validate 失败
     assert_raises(MPK::Error) { @pub.publish(bad) }
     assert_equal good_current, @pub.status[:current]
     assert_equal first[:build_id], good_current
-  end
-
-  def resolve_via_token(token)
-    path = @pub.resolve_subscription(token)
-    refute_nil path, 'token should resolve to a file'
-    doc = YAML.safe_load(File.read(path), permitted_classes: [Symbol], aliases: true)
-    # 通过 build metadata 反查 build-id
-    current = @pub.status[:current]
-    current
   end
 end

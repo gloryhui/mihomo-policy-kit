@@ -44,8 +44,8 @@ MPK_PUBLIC_BASE_URL
   current/mihomo.yaml                            # 当前成功版本视图
   previous/mihomo.yaml                           # 切换前版本视图（第二次发布后存在）
   public/
-    sub/<token-fingerprint>/ -> ../../../../current   # token 视图（目录 symlink）
-  token-state/<fingerprint>.json                 # token 元数据（不含完整 token）
+    sub/<token>/ -> ../../current                # token 视图（目录 symlink，名 = 完整高熵 token）
+  token-state/<fingerprint>.json                 # token 元数据（私有敏感，含完整 token 以便吊销）
 ```
 
 - `current` 永远指向完整校验通过的 build；失败发布不会改变 current。
@@ -109,11 +109,15 @@ https://<host>/sub/<token>/mihomo.yaml
 ```
 
 - Token 使用 `SecureRandom`（CSPRNG）生成，至少 256 bit 随机熵，URL-safe，不使用可预测自增 ID。
-- `public/sub/<fingerprint>` 是目录 symlink，指向统一的 `current`：promotion / rollback 后
-  所有 token 自动看到新 current / previous，不需要逐个更新。
+- `public/sub/<完整 token>` 是目录 symlink，指向统一的 `current`：客户端 URL 中的高熵 token
+  与文件系统公开路径完全一致，静态 Nginx 可直接命中；promotion / rollback 后所有 token
+  自动看到新 current / previous，不需要逐个更新。
 - `token list` 默认只显示 name + fingerprint（SHA256 前 16 hex），不打印完整 token。
-- `revoke <name>` 只移除该 token 的公开视图，不影响其他 token。
+- `revoke <name>` 读取私有 token-state 拿到完整 token，删除对应的 `public/sub/<token>` 公开
+  视图，不影响其他 token。
 - 完整 token 只在 `token create` 的本地结果中一次性显示。
+- `token-state/` 是私有敏感数据：其中记录完整 token（filesystem 视图管理需要精确吊销），
+  必须与 `builds/` 同等对待，禁止提交仓库、禁止进入备份明文日志；丢失后只能重新 create。
 
 ## 安全（P0）
 
@@ -139,8 +143,9 @@ https://<host>/sub/<token>/mihomo.yaml
 - 每个 build 目录是完整的、immutable 的版本；`builds/` 就是版本历史。
 - 恢复任意历史版本：用 `MPK_PUBLISH_ROOT` 下对应 `builds/<build-id>/mihomo.yaml`
   作为 artifact 重新 `publish`，或直接改状态指针（谨慎）。
-- 建议定期备份 `builds/` 与 `token-state/`（不含完整 token，仅元数据；若丢失
-  token-state 需重新 create token 并更新客户端）。
+- 建议定期备份 `builds/`（版本历史）与 `token-state/`。`token-state/` 含完整 token，
+  属于敏感数据：备份文件本身必须加密 / 限权；若丢失 token-state 需重新 create token
+  并更新客户端。
 
 ## 尚未实现
 

@@ -20,12 +20,14 @@ module MPK
     #     -> 完整 build 原子进入 builds/<build-id>
     #     -> 最后才切换 current/previous
     #
-    # 任何失败都不改变线上 current。
+    # 失败安全（Sol Review P0）：
+    #   - build 目录写入失败时清理半成品目录，不留下孤儿 build
+    #   - 任何失败都不改变线上 current；promote 失败时 current/previous 与操作前完全一致
     class Publisher
       attr_reader :runtime, :tokens, :config
 
-      def initialize(root:, config: nil, env: ENV)
-        @runtime = Runtime.new(root)
+      def initialize(root:, config: nil, env: ENV, runtime: nil)
+        @runtime = runtime || Runtime.new(root)
         @tokens = TokenStore.new(root)
         @config = config
         @env = env
@@ -68,20 +70,25 @@ module MPK
 
         build_dir = runtime.build_dir(build_id)
         FileUtils.mkdir_p(build_dir)
-
-        # 先写完整内容，再写 metadata（内容完整后才允许被引用）
-        File.binwrite(runtime.build_yaml(build_id), content)
-        metadata = {
-          'build_id' => build_id,
-          'published_at' => Time.now.utc.iso8601,
-          'sha256' => sha256,
-          'proxies' => stats[:proxies],
-          'proxy_providers' => stats[:proxy_providers],
-          'proxy_groups' => stats[:proxy_groups],
-          'rules' => stats[:rules],
-          'mihomo_tested' => stats[:mihomo_tested]
-        }
-        write_json(runtime.build_metadata_path(build_id), metadata)
+        begin
+          # 先写完整内容，再写 metadata（内容完整后才允许被引用）
+          File.binwrite(runtime.build_yaml(build_id), content)
+          metadata = {
+            'build_id' => build_id,
+            'published_at' => Time.now.utc.iso8601,
+            'sha256' => sha256,
+            'proxies' => stats[:proxies],
+            'proxy_providers' => stats[:proxy_providers],
+            'proxy_groups' => stats[:proxy_groups],
+            'rules' => stats[:rules],
+            'mihomo_tested' => stats[:mihomo_tested]
+          }
+          write_json(runtime.build_metadata_path(build_id), metadata)
+        rescue StandardError
+          # 半成品 build 不得留在 builds/（可能被 find_build_by_sha256 / promote 误用）
+          FileUtils.rm_rf(build_dir) if File.directory?(build_dir)
+          raise
+        end
 
         # 最后才切换 current/previous
         runtime.promote!(build_id)
@@ -117,12 +124,14 @@ module MPK
         }
       end
 
-      # 创建 token 并建立公开视图（public/sub/<fp> -> current）。
-      # 返回一次性的完整 token / URL。
+      # 创建 token 并建立公开视图：public/sub/<完整 token> -> current。
+      # 完整 token 只在本方法返回值中一次性出现；token-state 是私有敏感数据，
+      # 记录完整 token 用于 filesystem 视图管理（revoke 精确删除），
+      # 但普通 list / status / 日志不得输出。
       def create_token(name, public_base_url: nil)
         runtime.init!
         result = tokens.create(name)
-        created = runtime.create_token_view(result[:fingerprint])
+        created = runtime.create_token_view(result[:token])
         unless created
           # view 创建失败：回滚 token 记录，避免孤儿状态
           tokens.delete(result[:fingerprint])
@@ -138,12 +147,16 @@ module MPK
         tokens.list
       end
 
-      # 吊销指定 name 的 token：移除公开视图，不影响其他 token。
+      # 吊销指定 name 的 token：移除其公开视图（精确到完整 token 的 URL 路径），
+      # 不影响其他 token。
       def revoke_token(name)
         runtime.init!
-        fingerprint = tokens.revoke(name)
-        runtime.remove_token_view(fingerprint)
-        fingerprint
+        token = tokens.find_by_name(name)
+        raise MPK::Error, 'token not found: ' + name.to_s if token.nil?
+
+        runtime.remove_token_view(token)
+        tokens.revoke(name)
+        TokenStore.fingerprint(token)
       end
 
       # 给定完整 token 解析稳定 URL 对应的文件（跟随 current）。
