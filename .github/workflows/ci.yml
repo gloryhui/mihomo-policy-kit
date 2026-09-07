@@ -94,7 +94,7 @@ jobs:
             openssl req -x509 -newkey rsa:2048 -keyout /tmp/mpk-nginx-prefix/privkey.pem \
               -out /tmp/mpk-nginx-prefix/fullchain.pem -days 1 -nodes \
               -subj '/CN=example.invalid' >/dev/null 2>&1
-            sed 's/<YOUR-DOMAIN>/example.invalid/g; s#<YOUR-CERT-PATH>#/tmp/mpk-nginx-prefix#g' \
+            sed 's/<YOUR-DOMAIN>/example.invalid/g; s#<YOUR-CERT-PATH>#/tmp/mpk-nginx-prefix#g; s/listen 443 ssl/listen 8443 ssl/' \
               deploy/nginx/mihomo-subscription.conf.example > /tmp/mpk-server.conf
             {
               echo "pid /tmp/mpk-nginx-prefix/nginx.pid;"
