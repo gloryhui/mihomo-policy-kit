@@ -44,6 +44,7 @@ jobs:
           ruby -c test/publisher/test_publisher_integration.rb
           ruby -c test/publisher/test_publisher_fault_injection.rb
           ruby -c test/publisher/test_publisher_crash_recovery.rb
+          ruby -c test/publisher/test_publisher_staging_atomicity.rb
 
       - name: Shell syntax
         run: |
@@ -77,6 +78,7 @@ jobs:
           ruby test/publisher/test_publisher_secret.rb
           ruby test/publisher/test_publisher_fault_injection.rb
           ruby test/publisher/test_publisher_crash_recovery.rb
+          ruby test/publisher/test_publisher_staging_atomicity.rb
           ruby test/publisher/test_nginx_example.rb
 
       - name: Provider wrapper fixture test
@@ -85,7 +87,7 @@ jobs:
       - name: Offline end-to-end integration test
         run: ruby test/test_e2e_offline.rb
 
-      - name: Publisher Linux integration (symlink / atomic rename)
+      - name: Publisher integration (atomic active pointer / token URL)
         run: ruby test/publisher/test_publisher_integration.rb
 
       - name: Nginx config syntax (if nginx available)
@@ -212,4 +214,5 @@ jobs:
           ruby test/publisher/test_publisher_secret.rb
           ruby test/publisher/test_publisher_fault_injection.rb
           ruby test/publisher/test_publisher_crash_recovery.rb
+          ruby test/publisher/test_publisher_staging_atomicity.rb
           ruby test/publisher/test_nginx_example.rb

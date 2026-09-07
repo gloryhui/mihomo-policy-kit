@@ -23,23 +23,29 @@ class PublisherSecretTest < Minitest::Test
       root = File.join(dir, 'runtime')
       pub = MPK::Publisher::Publisher.new(root: root)
       pub.init!
+      # 先 publish 建立 current，再 create token（成功路径）
+      artifact = File.join(dir, 'valid.yaml')
+      File.write(artifact, YAML.dump(
+        'proxies' => [{ 'name' => 'Fake', 'type' => 'ss', 'server' => '127.0.0.1', 'port' => 443, 'cipher' => 'aes-128-gcm', 'password' => 'x' }],
+        'proxy-groups' => [{ 'name' => 'G', 'type' => 'select', 'proxies' => ['Fake'] }],
+        'rules' => ['MATCH,G']
+      ))
+      pub.publish(artifact)
 
       buffer = StringIO.new
       original = $stdout
       $stdout = buffer
       begin
-        begin
-          pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
-        rescue MPK::Error
-          # expected when symlink unsupported (Windows) or otherwise handled
-        end
+        pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
       ensure
         $stdout = original
       end
 
       refute_includes buffer.string, SECRET
+      refute_includes buffer.string, 'Fake'
     end
   end
+
 
   # CLI 级：publish 全流程 stdout/stderr 不包含 secret（用假 secret 内容）
   def test_cli_publish_stdout_does_not_contain_secret_content

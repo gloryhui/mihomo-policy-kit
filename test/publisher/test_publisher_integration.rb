@@ -1,5 +1,4 @@
 # frozen_string_literal: true
-
 require 'minitest/autorun'
 require 'tmpdir'
 require 'yaml'
@@ -7,32 +6,40 @@ require 'fileutils'
 require_relative '../../lib/overlay'
 require_relative '../../lib/publisher/publisher'
 
-# Publisher Linux integration test（Issue #11 03/04/08 + Sol Review P0）。
-# 覆盖真实 symlink / atomic rename 行为、多 token 跟随 current、revoke 隔离。
-# Windows 上创建 symlink 需要权限，这里跳过 symlink 相关断言但保留纯逻辑检查。
+# Publisher integration test（Issue #11 03/04/08 + Sol Review P0 两轮）。
+# 新布局不再依赖 symlink：token 公开视图是真实文件 public/sub/<token>/mihomo.yaml，
+# 因此这些断言在 Windows / Linux 均可运行。
+# 额外覆盖 Sol 第二轮要求：promotion / rollback 的每个内部步骤之间真实读取
+# public/sub/<token>/mihomo.yaml，断言始终存在、可读、内容只能是 old 或 new。
+class ObservingRuntime < MPK::Publisher::Runtime
+  def initialize(root)
+    super
+    @observer = nil
+  end
+
+  # 注入观察回调：每个原子 rename 前后都会调用。
+  attr_accessor :observer
+
+  def atomic_rename(source, target)
+    @observer.call(source, target, :before) if @observer
+    super.tap do
+      @observer.call(source, target, :after) if @observer
+    end
+  end
+end
+
 class PublisherIntegrationTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
 
   def setup
     @dir = Dir.mktmpdir('mpk-pub-it-')
-    @pub = MPK::Publisher::Publisher.new(root: File.join(@dir, 'runtime'))
+    @runtime = ObservingRuntime.new(File.join(@dir, 'runtime'))
+    @pub = MPK::Publisher::Publisher.new(root: @runtime.root, runtime: @runtime)
     @pub.init!
   end
 
   def teardown
     FileUtils.remove_entry(@dir) if @dir && File.exist?(@dir)
-  end
-
-  def symlink_supported?
-    return @symlink_supported unless @symlink_supported.nil?
-
-    begin
-      probe = File.join(@dir, 'probe-link')
-      File.symlink(@dir, probe)
-      @symlink_supported = true
-    rescue SystemCallError, NotImplementedError
-      @symlink_supported = false
-    end
   end
 
   def write_yaml(name, port)
@@ -45,8 +52,8 @@ class PublisherIntegrationTest < Minitest::Test
     path
   end
 
-  def current_yaml_path
-    File.join(@dir, 'runtime', 'current', 'mihomo.yaml')
+  def current_build_yaml(build_id)
+    File.join(@dir, 'runtime', 'builds', build_id, 'mihomo.yaml')
   end
 
   def test_first_publish_sets_current_with_no_previous
@@ -54,7 +61,6 @@ class PublisherIntegrationTest < Minitest::Test
     assert_equal 1, @pub.status[:builds].length
     refute_nil @pub.status[:current]
     assert_nil @pub.status[:previous]
-    assert File.file?(current_yaml_path)
   end
 
   def test_second_publish_moves_old_to_previous
@@ -64,12 +70,10 @@ class PublisherIntegrationTest < Minitest::Test
     assert_equal first[:build_id], @pub.status[:previous]
   end
 
-  # 真实 filesystem 集成（Sol Review P0 #1）：
-  # 创建 token 后，public/sub/<完整 token>/mihomo.yaml 必须真实可读，且内容跟随 current；
+  # 真实 filesystem 集成（Sol Review P0 #1 / #2）：
+  # token URL 是 public/sub/<完整 token>/mihomo.yaml 真实文件，跟随 current，
   # promotion / rollback 后仍跟随；revoke 后该实际 URL 路径消失，其他 token 仍可读。
   def test_real_token_url_path_follows_current_rollback_and_revoke
-    skip 'symlink unsupported on this platform' unless symlink_supported?
-
     first = @pub.publish(write_yaml('A', 443))
     t1 = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
     t2 = @pub.create_token('laptop', public_base_url: 'https://sub.example.invalid')
@@ -84,32 +88,30 @@ class PublisherIntegrationTest < Minitest::Test
                  'public path must use the full token, not the short fingerprint'
 
     # 内容跟随 current（A）
-    assert_equal File.binread(current_yaml_path), File.binread(url1)
-    assert_equal File.binread(current_yaml_path), File.binread(url2)
+    assert_equal File.binread(current_build_yaml(first[:build_id])), File.binread(url1)
+    assert_equal File.binread(current_build_yaml(first[:build_id])), File.binread(url2)
 
     # promotion 到 B：两个 token 自动跟随新 current
     second = @pub.publish(write_yaml('B', 8443))
     assert_equal second[:build_id], @pub.status[:current]
-    assert_equal File.binread(current_yaml_path), File.binread(url1)
-    assert_equal File.binread(current_yaml_path), File.binread(url2)
+    assert_equal File.binread(current_build_yaml(second[:build_id])), File.binread(url1)
+    assert_equal File.binread(current_build_yaml(second[:build_id])), File.binread(url2)
 
     # rollback 回 A：token URL 路径仍可读并跟随 current
     @pub.rollback
     assert_equal first[:build_id], @pub.status[:current]
-    assert_equal File.binread(current_yaml_path), File.binread(url1)
-    assert_equal File.binread(current_yaml_path), File.binread(url2)
+    assert_equal File.binread(current_build_yaml(first[:build_id])), File.binread(url1)
+    assert_equal File.binread(current_build_yaml(first[:build_id])), File.binread(url2)
 
     # revoke phone：phone 的 URL 路径消失，laptop 仍可读
     @pub.revoke_token('phone')
     refute File.exist?(File.join(@dir, 'runtime', 'public', 'sub', t1[:token])),
            'revoked token public path must be removed'
     assert File.file?(url2), 'other token URL path must remain readable'
-    assert_equal File.binread(current_yaml_path), File.binread(url2)
+    assert_equal File.binread(current_build_yaml(first[:build_id])), File.binread(url2)
   end
 
   def test_revoke_one_token_does_not_affect_other
-    skip 'symlink unsupported on this platform' unless symlink_supported?
-
     @pub.publish(write_yaml('A', 443))
     t1 = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
     t2 = @pub.create_token('laptop', public_base_url: 'https://sub.example.invalid')
@@ -121,17 +123,74 @@ class PublisherIntegrationTest < Minitest::Test
     assert @pub.runtime.token_view?(t2[:token]), 'other token public view still present'
   end
 
-  def test_token_view_is_symlink_to_current
-    skip 'symlink unsupported on this platform' unless symlink_supported?
-
+  def test_token_view_is_real_file_not_symlink
     @pub.publish(write_yaml('A', 443))
     t1 = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
 
-    link = File.join(@dir, 'runtime', 'public', 'sub', t1[:token])
-    assert File.symlink?(link), 'token view should be a symlink'
-    target = File.realpath(link)
-    current_real = File.realpath(File.join(@dir, 'runtime', 'current'))
-    assert_equal current_real, target
+    file = File.join(@dir, 'runtime', 'public', 'sub', t1[:token], 'mihomo.yaml')
+    assert File.file?(file), 'token view should be a regular readable file'
+    refute File.symlink?(file), 'token view should not rely on symlink'
+  end
+
+  # Sol 第二轮 P0 核心：promote 全程每个内部步骤之间，token URL 恒存在、可读、
+  # 内容只能是 old 或 new。
+  def test_token_url_always_readable_old_or_new_during_promote
+    @pub.publish(write_yaml('A', 443))
+    t1 = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
+    url = File.join(@dir, 'runtime', 'public', 'sub', t1[:token], 'mihomo.yaml')
+
+    @pub.publish(write_yaml('B', 8443))
+    old_content = File.binread(url)
+    candidate = write_yaml('C', 9443)
+    candidate_content = File.binread(candidate)
+
+    # 观察每个内部步骤之间（在 Runtime 每次写文件前回调检查）
+    observed = []
+    @runtime.observer = proc do |_source, _target, _phase|
+      if File.file?(url)
+        content = File.binread(url)
+        observed << content
+        assert [old_content, candidate_content].include?(content),
+               "token content must be old or new, got #{content.inspect}"
+      else
+        observed << :missing
+        flunk 'token URL must never disappear during promote'
+      end
+    end
+
+    @pub.publish(candidate)
+    refute_empty observed, 'observer must run at every internal atomic switch step'
+    final_content = File.binread(current_build_yaml(@pub.status[:current]))
+    observed << File.binread(url)
+    assert_equal final_content, observed.last
+  end
+
+  # 观察式：rollback 全程每个内部步骤之间 token URL 恒可读 old/new。
+  def test_token_url_always_readable_old_or_new_during_rollback
+    first = @pub.publish(write_yaml('A', 443))
+    @pub.publish(write_yaml('B', 8443))
+    t1 = @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
+    url = File.join(@dir, 'runtime', 'public', 'sub', t1[:token], 'mihomo.yaml')
+
+    cur_content = File.binread(url) # B
+    prev_content = File.binread(current_build_yaml(first[:build_id])) # A
+
+    observed = []
+    @runtime.observer = proc do |_source, _target, _phase|
+      if File.file?(url)
+        content = File.binread(url)
+        observed << content
+        assert [cur_content, prev_content].include?(content),
+               "rollback token content must be old current or previous, got #{content.inspect}"
+      else
+        observed << :missing
+        flunk 'token URL must never disappear during rollback'
+      end
+    end
+
+    @pub.rollback
+    refute_empty observed, 'observer must run at every internal atomic switch step'
+    assert_equal first[:build_id], @pub.status[:current]
   end
 
   def test_builds_are_immutable_after_publish

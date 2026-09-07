@@ -198,15 +198,15 @@ class PublisherTest < Minitest::Test
   end
 
   def test_token_create_failure_rolls_back_record
-    # Windows 无 symlink 权限时，create_token 应报错且不留孤儿 token
-    begin
+    # 尚无 current build 时，create_token 应报错且不留孤儿 token 记录。
+    # （新布局 token 视图是真实文件，不依赖 symlink；失败仅发生在无 current 等场景）
+    error = assert_raises(MPK::Error) do
       @pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
-    rescue MPK::Error
-      # expected on Windows without symlink permission; on Linux may succeed
     end
-    tokens = @pub.list_tokens
-    assert_operator tokens.length, :<=, 1, 'failed create must not leave orphan tokens'
+    refute_nil error
+    assert_empty @pub.list_tokens, 'failed create must not leave orphan tokens'
   end
+
 
   def capture_stdout
     original = $stdout

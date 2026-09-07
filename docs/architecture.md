@@ -221,10 +221,9 @@ dist/mihomo.yaml
 V0.2 已实现 Publisher（见 `docs/publisher.md`）：
 
 ```text
-builds/<build-id>/mihomo.yaml + metadata.json   # immutable 版本
-current/mihomo.yaml                            # 当前成功版本视图
-previous/mihomo.yaml                           # 切换前版本视图
-public/sub/<token>/ -> ../../current           # token 视图（目录 symlink，名 = 完整 token）
+builds/<build-id>/mihomo.yaml + metadata.json   # immutable 版本；staging 后原子进入
+active-state.json                              # 单一原子指针：{ current, previous }
+public/sub/<token>/mihomo.yaml                 # 真实文件；tmp+rename 原子替换
 token-state/<fingerprint>.json                 # token 元数据（私有敏感，含完整 token）
 ```
 
@@ -236,8 +235,9 @@ token-state/<fingerprint>.json                 # token 元数据（私有敏感�
 
 - 只有新构建完整通过校验后才切换 `current`。
 - 发布失败 / 校验失败 / rollback 失败都不会让 current 指向半成品。
-- 多 token 通过目录 symlink 跟随统一 current，promotion / rollback 对所有 token 一致。
-- 生产运行目标是 Linux + Nginx；Windows 只跑 Ruby 纯逻辑 / 单元测试。
+- `active-state.json` 以单文件原子替换 current / previous；token 真实文件以原子覆盖跟随 current，
+  因而切换过程中每个已存在 token URL 始终可读到旧或新完整配置。
+- 生产运行目标是 Linux + Nginx；Publisher Ruby 逻辑与 token 视图回归同时在 Windows / Linux 运行。
 
 ## 10. 安全
 
@@ -256,10 +256,11 @@ token-state/<fingerprint>.json                 # token 元数据（私有敏感�
 - Publisher 纯逻辑：`test/publisher/test_build_id.rb`、`test/publisher/test_token.rb`
 - Publisher 主流程：`test/publisher/test_publisher.rb`（publish / rollback / 幂等 / 失败路径）
 - Secret 回归：`test/publisher/test_publisher_secret.rb`（`VERY_SECRET_PUBLISH_TOKEN_123`）
-- 故障注入 / 崩溃自愈回归：`test/publisher/test_publisher_fault_injection.rb`、
-  `test/publisher/test_publisher_crash_recovery.rb`（promote/rollback 失败不破坏 current/previous）
+- 故障注入 / 崩溃自愈 / staging 原子性回归：`test/publisher/test_publisher_fault_injection.rb`、
+  `test/publisher/test_publisher_crash_recovery.rb`、`test/publisher/test_publisher_staging_atomicity.rb`
 - Nginx 示例确定性文本回归：`test/publisher/test_nginx_example.rb`
-- Publisher Linux 集成：`test/publisher/test_publisher_integration.rb`（symlink / atomic rename / 真实 token URL 路径）
+- Publisher integration：`test/publisher/test_publisher_integration.rb`（每个切换步骤中真实 token URL
+  恒可读、内容仅为 old/new、原子 active 指针）
 - Provider wrapper 离线测试：`test/providers/test_smart_config_kit.sh`（fake upstream，不出网）
 - 离线端到端：`test/test_e2e_offline.rb`（fixture -> provider -> overlay -> validate -> output）
 - 真实订阅 smoke：`scripts/smoke_test.ps1`（人工执行，不进入 CI）

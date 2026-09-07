@@ -7,11 +7,12 @@ require 'fileutils'
 require_relative '../../lib/overlay'
 require_relative '../../lib/publisher/publisher'
 
-# Sol Review P0 故障注入回归测试：
-#   - publish promotion 最终 rename 失败时，current/previous 必须与操作前完全一致
-#     （B current / A previous 不被破坏，previous 不丢失）
-#   - rollback 中途 rename 失败时，current/previous 保持操作前状态，current 不缺失
-# 通过子类 Runtime 在第 N 次 atomic_rename 注入失败实现（纯目录 rename，跨平台可跑）。
+# Sol Review P0 故障注入回归测试（第二轮原子性设计）：
+#   - 新设计原子点：commit_build 的 staging->builds rename、write_active 的
+#     active-state.json rename、write_view_file 的视图文件 rename。
+#   - 通过子类 Runtime 在第 N 次 atomic_rename 注入失败。
+# 断言失败后不破坏 good state：current/previous 保持、builds 不受污染、
+# token URL 始终可读（旧或新完整版本）。
 class FaultInjectingRuntime < MPK::Publisher::Runtime
   attr_accessor :fail_on_call
 
@@ -32,7 +33,6 @@ class FaultInjectingRuntime < MPK::Publisher::Runtime
     @rename_calls
   end
 
-  # 在注入故障前清零计数，使 fail_on_call 相对于下一次 promote!/rollback!。
   def reset_rename_counter!
     @rename_calls = 0
   end
@@ -71,7 +71,6 @@ class PublisherFaultInjectionTest < Minitest::Test
     path
   end
 
-  # 建立 A -> current、B -> current（A 为 previous）的双版本状态。
   def two_version_state(pub, runtime)
     a = pub.publish(write_yaml('A', 443))
     b = pub.publish(write_yaml('B', 8443))
@@ -80,30 +79,33 @@ class PublisherFaultInjectionTest < Minitest::Test
     [a[:build_id], b[:build_id]]
   end
 
-  # 断言 current=B、previous=A，且两个视图目录内容/metadata 都可用。
   def assert_state_b_a(pub, a_id, b_id)
     assert_equal b_id, pub.status[:current]
     assert_equal a_id, pub.status[:previous]
-    assert File.file?(File.join(@dir, 'runtime', 'current', 'mihomo.yaml'))
-    assert File.file?(File.join(@dir, 'runtime', 'previous', 'mihomo.yaml'))
   end
 
-  def test_promote_final_rename_failure_keeps_current_and_previous
+  def build_dir(build_id)
+    File.join(@dir, 'runtime', 'builds', build_id)
+  end
+
+  # 无 token 时 publish(C) 的 rename 序列：
+  #   1 = commit_build(staging -> builds/C)
+  #   2 = write_active(active-state.json)
+  # 在 active 指针写入失败时，current/previous 必须完全不变。
+  def test_promote_active_write_failure_keeps_current_and_previous
     runtime = build_runtime
     pub = publisher(runtime)
     a_id, b_id = two_version_state(pub, runtime)
 
-    # promote 的第 3 次 rename（新视图 -> current）失败：
-    #   B=current/A=previous 时发布 C，模拟最终 promotion rename 失败。
     runtime.reset_rename_counter!
-    runtime.fail_on_call = 3
-    error = assert_raises(Errno::EIO) { pub.publish(write_yaml('C', 9443)) }
-    refute_nil error
+    runtime.fail_on_call = 2 # active-state.json rename 失败
+    assert_raises(Errno::EIO) { pub.publish(write_yaml('C', 9443)) }
 
-    # 失败后仍严格保持 current=B、previous=A（previous 不丢失）
     assert_state_b_a(pub, a_id, b_id)
+    # C 的 build 已原子进入（失败点在 promote），但不影响线上
+    assert Dir.glob(File.join(@dir, 'runtime', 'builds', '*')).any? { |p| File.basename(p).start_with?('202') }
 
-    # 后续可继续正常发布（故障只注入一次）
+    # 后续可继续正常发布
     runtime.reset_rename_counter!
     runtime.fail_on_call = nil
     c = pub.publish(write_yaml('C', 9443))
@@ -111,44 +113,33 @@ class PublisherFaultInjectionTest < Minitest::Test
     assert_equal b_id, pub.status[:previous]
   end
 
-  def test_promote_first_rename_failure_keeps_current_and_previous
+  # commit_build（staging -> builds）rename 失败：build 不进 builds，状态不变。
+  def test_commit_build_rename_failure_leaves_no_build_and_keeps_state
     runtime = build_runtime
     pub = publisher(runtime)
     a_id, b_id = two_version_state(pub, runtime)
 
-    # promote 的第 1 次 rename（previous -> backup journal）失败：
-    # 任何一步都不得移动/破坏 previous。
     runtime.reset_rename_counter!
-    runtime.fail_on_call = 1
+    runtime.fail_on_call = 1 # commit_build rename 失败
     assert_raises(Errno::EIO) { pub.publish(write_yaml('C', 9443)) }
+
     assert_state_b_a(pub, a_id, b_id)
+    # 无任何 C build 出现（staging 已清理，builds/ 不被污染）
+    refute Dir.glob(File.join(@dir, 'runtime', 'builds', '*'))
+              .any? { |p| !File.basename(p).start_with?('.') && !File.directory?(p) }
   end
 
-  def test_promote_second_rename_failure_keeps_current_and_previous
+  # rollback：active 指针写入失败 -> current/previous 保持，current 恒不缺失。
+  def test_rollback_active_write_failure_keeps_state
     runtime = build_runtime
     pub = publisher(runtime)
     a_id, b_id = two_version_state(pub, runtime)
 
-    # promote 的第 2 次 rename（current -> previous）失败：
     runtime.reset_rename_counter!
-    runtime.fail_on_call = 2
-    assert_raises(Errno::EIO) { pub.publish(write_yaml('C', 9443)) }
-    assert_state_b_a(pub, a_id, b_id)
-  end
-
-  def test_rollback_mid_failure_keeps_state_current_never_missing
-    runtime = build_runtime
-    pub = publisher(runtime)
-    a_id, b_id = two_version_state(pub, runtime)
-
-    # rollback 交换的第 3 次 rename（backup -> current，即完成互换那步）失败：
-    # 旧 current（B）此时已被移入 previous 槽，失败恢复必须把它放回 current。
-    runtime.reset_rename_counter!
-    runtime.fail_on_call = 3
+    runtime.fail_on_call = 1 # rollback 里 write_active 的 rename 是第 1 次
     assert_raises(Errno::EIO) { pub.rollback }
+
     assert_state_b_a(pub, a_id, b_id)
-    assert File.file?(File.join(@dir, 'runtime', 'current', 'mihomo.yaml')),
-           'current must never be missing after a failed rollback'
 
     # 再次 rollback（无故障）应正常工作：B/A 互换
     runtime.reset_rename_counter!
@@ -158,16 +149,22 @@ class PublisherFaultInjectionTest < Minitest::Test
     assert_equal b_id, result[:previous]
   end
 
-  def test_rollback_second_rename_failure_keeps_state_current_never_missing
+  # active 指针已切到 C、但 token 视图原子覆盖失败时，promote 必须把 active
+  # 恢复为 B/A 并让 token 视图回到 B；全过程目标文件都没有被删除。
+  def test_token_view_refresh_failure_restores_good_active_state
     runtime = build_runtime
     pub = publisher(runtime)
     a_id, b_id = two_version_state(pub, runtime)
+    token = pub.create_token('phone', public_base_url: 'https://sub.example.invalid')
+    token_path = File.join(runtime.root, 'public', 'sub', token[:token], 'mihomo.yaml')
+    old_content = File.binread(token_path)
 
-    # rollback 交换的第 2 次 rename（current -> previous）失败：
     runtime.reset_rename_counter!
-    runtime.fail_on_call = 2
-    assert_raises(Errno::EIO) { pub.rollback }
+    runtime.fail_on_call = 3 # commit_build, active-state, token view
+    assert_raises(Errno::EIO) { pub.publish(write_yaml('C', 9443)) }
+
     assert_state_b_a(pub, a_id, b_id)
-    assert File.file?(File.join(@dir, 'runtime', 'current', 'mihomo.yaml'))
+    assert File.file?(token_path), 'failed refresh must not remove the token URL path'
+    assert_equal old_content, File.binread(token_path)
   end
 end

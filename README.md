@@ -79,7 +79,8 @@ mihomo-policy-kit 负责：
 ### 输出
 
 - `dist/mihomo.yaml`（仅 Mihomo YAML）
-- V0.2 Publisher：`builds/<build-id>/mihomo.yaml`（immutable 版本）、`current` / `previous` 状态指针、
+- V0.2 Publisher：`builds/<build-id>/mihomo.yaml`（immutable 版本）、原子 `active-state.json` 的
+  `current` / `previous` 状态指针、
   `/sub/<token>/mihomo.yaml` 稳定 HTTPS 订阅 URL（多 Token，可独立吊销）
 
 ### 当前主要兼容客户端
@@ -196,8 +197,8 @@ bash bin/mpk publisher status
 bash bin/mpk rollback
 ```
 
-多设备 Token 稳定 URL（Linux 生产目标；Windows 开发环境创建 symlink 需要权限，
-生产部署请使用 Linux）：
+多设备 Token 稳定 URL（token 公开视图是原子替换的真实文件，Windows 与 Linux 均可创建；
+生产部署仍以 Linux + Nginx 为目标）：
 
 ```powershell
 # 一次性输出完整订阅 URL
@@ -352,9 +353,10 @@ ruby test/publisher/test_publisher.rb
 ruby test/publisher/test_publisher_secret.rb
 ruby test/publisher/test_publisher_fault_injection.rb
 ruby test/publisher/test_publisher_crash_recovery.rb
+ruby test/publisher/test_publisher_staging_atomicity.rb
 ruby test/publisher/test_nginx_example.rb
 
-# Publisher Linux 集成（symlink / atomic rename；Windows 跳过 symlink 断言）
+# Publisher integration（真实 token URL / 原子 active 指针；Windows 与 Linux 均运行）
 ruby test/publisher/test_publisher_integration.rb
 
 # Provider wrapper 离线测试（需要 bash）
@@ -367,7 +369,7 @@ ruby test/test_e2e_offline.rb
 CI（`.github/workflows/ci.yml`）包含：
 
 - **Linux**：Ruby 语法 + 单元测试（含 Publisher）、Bash 语法、Provider fixture 测试、离线 E2E、
-  Publisher Linux 集成（symlink / atomic rename）、Nginx 语法（有 nginx 时 `nginx -t`）、doctor
+  Publisher integration（原子 active 指针 / token URL）、Nginx 语法（有 nginx 时 `nginx -t`）、doctor
 - **Windows**：PowerShell 语法 + task-picker 回归、Ruby 通用逻辑测试（含 Publisher 纯逻辑）
 
 ## 项目结构
@@ -422,6 +424,7 @@ mihomo-policy-kit/
 │   │   ├── test_publisher_secret.rb
 │   │   ├── test_publisher_fault_injection.rb
 │   │   ├── test_publisher_crash_recovery.rb
+│   │   ├── test_publisher_staging_atomicity.rb
 │   │   ├── test_publisher_integration.rb
 │   │   ├── test_nginx_example.rb
 │   │   └── fixtures/

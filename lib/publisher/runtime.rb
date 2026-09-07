@@ -2,6 +2,7 @@
 
 require 'fileutils'
 require 'json'
+require 'digest'
 require 'time'
 require 'securerandom'
 require_relative 'build_id'
@@ -13,31 +14,34 @@ module MPK
     # 布局：
     #
     #   <root>/
-    #     builds/<build-id>/mihomo.yaml + metadata.json   # immutable 版本
-    #     current/mihomo.yaml                            # 当前成功版本的发布视图
-    #     previous/mihomo.yaml                           # 切换前的发布视图（第二次发布后存在）
-    #     public/sub/<token>/ -> ../../current           # 目录 symlink（token = 完整高熵 token）
-    #     token-state/<fingerprint>.json                 # token 元数据（含 token，敏感，仅私有 state）
+    #     builds/<build-id>/mihomo.yaml + metadata.json   # immutable 版本（staging 后原子进入）
+    #     active-state.json                               # 单一原子指针（current/previous 唯一事实源）
+    #     public/sub/<token>/mihomo.yaml                  # 真实文件视图（跟随 current，原子覆盖）
+    #     token-state/<fingerprint>.json                  # token 元数据（含完整 token，敏感）
     #
-    # 原子性与失败安全（Issue #11 03 + Sol Review P0）：
-    #   - build 目录一旦完整写入后 immutable；promote / rollback 只交换 current/previous
-    #     视图目录，绝不修改 builds/<id> 内容。
-    #   - promote! / rollback! 从不先销毁旧 previous：旧 previous 先移入唯一命名的
-    #     journal 备份目录（.prev-backup-* / .rollback-backup-*），只有新状态完全
-    #     就位后才删除备份。
-    #   - 任一步 rename 失败都按逆序恢复（restore_after_failed_*），保证失败后
-    #     current/previous 与操作前完全一致（内容与 metadata 均可用，previous 不丢失）。
-    #   - 进程中途崩溃后的自愈：操作入口会先检查 journal 备份并把它们恢复到空的
-    #     权威槽位（current/previous），绝不覆盖已有状态。
-    #   - 正常发布期间 current 槽在两个 rename 之间可能短暂缺失（客户端 404），
-    #     但绝不会指向半成品 build；失败路径保证恢复到操作前状态。
+    # 原子性与可观察一致性（Issue #11 + Sol Review 两轮 P0）：
+    #   - build 一旦完整写入后 immutable，从不被修改；build 目录通过
+    #     “.build-staging-* 写完整 -> 一次 atomic rename 进入 builds/”落盘，
+    #     进程在写 YAML / metadata 中途崩溃最多遗留 staging，不会污染 builds/。
+    #   - current / previous 通过单一 `active-state.json` 表达：
+    #     { "current": <build-id>, "previous": <build-id> | null }。
+    #     整个文件用“写 tmp + rename”单点原子替换：任何时刻读取该文件都得到
+    #     完整一致的 (current, previous)，不存在多目录 rename 的中间消失窗口。
+    #   - 客户端稳定 URL public/sub/<token>/mihomo.yaml 是真实文件，内容为
+    #     当前 current build 的完整 YAML 拷贝。promote / rollback 后每个视图用
+    #     “写 tmp + rename 覆盖”原子更新：目标路径从不被删除，任何时刻打开都
+    #     成功，读到的是旧版或新版完整内容（绝不 404 / 缺失 / 半成品）。
+    #   - 逻辑状态（active-state.json）先切换，token 视图随后逐文件原子追赶；
+    #     中途崩溃只会留下“状态新 / 视图旧”的缓存滞后，下一次 init!/操作会用
+    #     当前 current 自愈刷新所有 token 视图，不破坏任何 good state。
+    #   - rollback 只改 active 指针与视图内容，不修改 builds/ 里任何文件。
     class Runtime
       BUILDS_DIR = 'builds'
-      CURRENT_DIR = 'current'
-      PREVIOUS_DIR = 'previous'
       PUBLIC_DIR = 'public'
       SUB_DIR = 'sub'
+      ACTIVE_FILE = 'active-state.json'
       CURRENT_VIEW = 'mihomo.yaml'
+      STAGING_PREFIXES = ['.build-staging-', '.view-tmp-'].freeze
 
       attr_reader :root
 
@@ -46,24 +50,25 @@ module MPK
       end
 
       def builds_dir = File.join(@root, BUILDS_DIR)
-      def current_dir = File.join(@root, CURRENT_DIR)
-      def previous_dir = File.join(@root, PREVIOUS_DIR)
       def public_dir = File.join(@root, PUBLIC_DIR)
       def sub_dir = File.join(public_dir, SUB_DIR)
-      def current_yaml = File.join(current_dir, CURRENT_VIEW)
-      def previous_yaml = File.join(previous_dir, CURRENT_VIEW)
+      def active_file = File.join(@root, ACTIVE_FILE)
 
-      # 初始化运行目录（幂等）：不存在则创建空骨架；若上次 promote/rollback
-      # 中途崩溃遗留 journal 备份，则先自愈恢复 current/previous 一致状态。
+      # 初始化运行目录（幂等）：创建空骨架、清理陈旧 staging、自愈滞后的 token 视图。
       def init!
         [builds_dir, public_dir, sub_dir].each { |dir| FileUtils.mkdir_p(dir) }
-        recover_interrupted_state!
+        cleanup_stale_staging!
+        reconcile_public_views!
         @root
       end
 
       def initialized?
         File.directory?(builds_dir) && File.directory?(public_dir) && File.directory?(sub_dir)
       end
+
+      # ------------------------------------------------------------------
+      # builds（immutable；staging -> 原子 rename 进入）
+      # ------------------------------------------------------------------
 
       def build_dir(build_id)
         File.join(builds_dir, build_id)
@@ -86,39 +91,124 @@ module MPK
         nil
       end
 
+      # build 完整 = YAML 存在、metadata 可解析、build_id 匹配，且 metadata 中的
+      # SHA256 与实际 YAML 完全相符。仅有一个文件、损坏/错配 metadata 的目录均是
+      # 无效残留，绝不参与 list_builds、幂等复用或 promote。
       def build_exists?(build_id)
-        File.file?(build_yaml(build_id))
+        id = build_id.to_s
+        return false if id.empty? || id.start_with?('.')
+
+        valid_build_dir?(build_dir(id), id)
       end
 
-      # 列出 builds 下所有 build-id（按字典序即时间序）。
+      # 列出 builds 下所有完整 build-id。
       def list_builds
         return [] unless File.directory?(builds_dir)
 
         Dir.children(builds_dir).select { |id| build_exists?(id) }.sort
       end
 
-      # 当前生效的 build-id：解析 current 目录的 metadata；无则 nil。
+      # 把完整 YAML + metadata 原子写入 builds/<build-id>。
+      # 先在 .build-staging-* 写完整，再整体 rename 一次进入 builds/。
+      # 已存在完整 build 时幂等返回；半成品残留绝不被当作 build。
+      def commit_build(build_id, content_yaml, metadata)
+        return build_id if build_exists?(build_id)
+
+        staging = staging_dir('.build-staging-')
+        begin
+          FileUtils.mkdir_p(staging)
+          File.binwrite(File.join(staging, CURRENT_VIEW), content_yaml)
+          File.write(File.join(staging, 'metadata.json'), JSON.pretty_generate(metadata))
+          # 完整性确认：rename 前必须是可独立验证的完整合法 build。
+          unless valid_build_dir?(staging, build_id.to_s)
+            raise MPK::Error, "staging incomplete or invalid for build: #{build_id}"
+          end
+          FileUtils.mkdir_p(builds_dir)
+          atomic_rename(staging, build_dir(build_id)) # 同文件系统一次原子 rename
+          staging = nil
+        ensure
+          FileUtils.rm_rf(staging) if staging && File.exist?(staging)
+        end
+        build_id
+      end
+
+      # ------------------------------------------------------------------
+      # active 指针（current / previous 唯一事实源）
+      # ------------------------------------------------------------------
+
+      # 返回 { 'current' => build-id|nil, 'previous' => build-id|nil }。
+      # 读取到不完整/损坏文件时按“无状态”处理（不抛出，保证可用性）。
+      def active_state
+        return { 'current' => nil, 'previous' => nil } unless File.file?(active_file)
+
+        parsed = JSON.parse(File.read(active_file, encoding: 'UTF-8'))
+        {
+          'current' => parsed['current'],
+          'previous' => parsed['previous']
+        }
+      rescue JSON::ParserError, TypeError
+        { 'current' => nil, 'previous' => nil }
+      end
+
       def current_build_id
-        metadata = read_view_metadata(current_dir)
-        metadata && metadata['build_id']
+        id = active_state['current']
+        id && build_exists?(id) ? id : nil
       end
 
       def previous_build_id
-        metadata = read_view_metadata(previous_dir)
-        metadata && metadata['build_id']
+        id = active_state['previous']
+        id && build_exists?(id) ? id : nil
       end
 
       def current_exists?
-        File.file?(current_yaml)
+        !current_build_id.nil?
       end
 
       def previous_exists?
-        File.file?(previous_yaml)
+        !previous_build_id.nil?
       end
 
-      # token 公开视图：public/sub/<token> -> ../../current（目录 symlink）。
-      # 目录名 = 客户端 URL 中的完整高熵 token，静态 Nginx 可真实命中
-      # /sub/<token>/mihomo.yaml；revoke 时删除该目录即精确吊销，不影响其他 token。
+      # promote：把已完整 build 提升为 current。
+      #   1. （build 已由 commit_build 原子进入 builds/）
+      #   2. 原子替换 active-state.json：current=build_id, previous=旧 current
+      #   3. 逐个原子刷新 token 视图到新内容
+      # 任一步失败都不破坏“已就位的 good state”：active 切换后崩溃只留下视图滞后，
+      # 自愈会补齐；active 切换前失败则线上完全不变。
+      def promote!(build_id)
+        raise MPK::Error, "build does not exist: #{build_id}" unless build_exists?(build_id)
+
+        original = active_state
+        new_previous = original['current'] && original['current'] != build_id ? original['current'] : original['previous']
+        write_active('current' => build_id, 'previous' => new_previous)
+        refresh_public_views(build_id)
+        build_id
+      rescue StandardError => error
+        # active 切换成功但某个 token 视图刷新失败时，恢复原 active 指针并尽力把
+        # 已刷新视图写回旧内容。每一步都是单文件原子替换，因此客户端只会看到
+        # old/new 完整内容，绝不会看到路径缺失或半成品。
+        restore_after_view_refresh_failure(original) if defined?(original) && original
+        raise error
+      end
+
+      # rollback：current 与 previous 互换（只改 active 指针与 token 视图）。
+      def rollback!
+        original = active_state
+        cur = original['current']
+        prev = original['previous']
+        raise MPK::Error, 'nothing to roll back: no previous build' unless prev && build_exists?(prev)
+
+        write_active('current' => prev, 'previous' => cur)
+        refresh_public_views(prev)
+        prev
+      rescue StandardError => error
+        restore_after_view_refresh_failure(original) if defined?(original) && original
+        raise error
+      end
+
+      # ------------------------------------------------------------------
+      # token 公开视图（真实文件，跟随 current）
+      # ------------------------------------------------------------------
+
       def token_view_dir(token)
         File.join(sub_dir, token.to_s)
       end
@@ -127,206 +217,143 @@ module MPK
         File.join(token_view_dir(token), CURRENT_VIEW)
       end
 
-      # 为 token 建立公开视图。Windows 无 symlink 权限时返回 false（由调用方处理）。
+      # 为 token 建立公开视图目录并写入当前 current 的内容。
+      # 无 current（从未 publish）时抛错。不依赖 symlink，Windows/Linux 均可用。
       def create_token_view(token)
-        link = token_view_dir(token)
-        FileUtils.rm_rf(link) if File.exist?(link)
-        # public/sub/<token>/mihomo.yaml -> <root>/current/mihomo.yaml
-        # symlink 目标相对 link 所在目录（public/sub）解析：../../current = <root>/current
-        File.symlink(File.join('..', '..', CURRENT_DIR), link)
+        current = active_state['current']
+        raise MPK::Error, 'cannot create token view: no current build' unless current && build_exists?(current)
+
+        dir = token_view_dir(token)
+        FileUtils.mkdir_p(dir)
+        write_view_file(dir, current)
         true
-      rescue NotImplementedError, SystemCallError
+      rescue SystemCallError
         false
       end
 
-      # token 公开视图是否就位。
+      # token 公开视图是否就位（mihomo.yaml 可读）。
       def token_view?(token)
-        path = token_view_dir(token)
-        File.symlink?(path) || File.directory?(path)
+        File.file?(subscription_yaml(token))
       end
 
-      # 吊销：删除该 token 的公开视图（精确到该 token 的 URL 路径）。
+      # 吊销：删除该 token 的公开视图目录（URL 立即失效），不影响其他 token。
       def remove_token_view(token)
         FileUtils.rm_rf(token_view_dir(token))
       end
 
-      # 把一个完整 build 提升为 current，并把旧 current 降为 previous。
-      #
-      # 失败安全步骤：
-      #   1. 旧 previous 移入 .prev-backup-* journal（不销毁）
-      #   2. current -> previous
-      #   3. 新视图 -> current
-      #   4. 成功后才删除 journal 备份
-      # 任一步失败都逆序恢复，失败后 current/previous 与操作前完全一致。
-      def promote!(build_id)
+      # 用给定 build 的内容原子刷新单个视图目录（tmp + rename 覆盖，路径恒在）。
+      def write_view_file(view_dir, build_id)
         raise MPK::Error, "build does not exist: #{build_id}" unless build_exists?(build_id)
 
-        recover_interrupted_state!
-
-        prepare = build_view_dir(build_id)
-        backup = nil
-        prev_backed_up = false
-        current_demoted = false
-        begin
-          if File.directory?(previous_dir)
-            backup = journal_dir('.prev-backup')
-            atomic_rename(previous_dir, backup)
-            prev_backed_up = true
-          end
-          if File.directory?(current_dir)
-            atomic_rename(current_dir, previous_dir)
-            current_demoted = true
-          end
-          atomic_rename(prepare, current_dir)
-          prepare = nil
-          backup = nil
-        rescue StandardError
-          restore_after_failed_promote(backup, prev_backed_up, current_demoted)
-          raise
-        ensure
-          # prepare 只是新视图的暂存副本（builds/ 中仍有权威内容），失败时可直接清理。
-          FileUtils.rm_rf(prepare) if prepare && File.exist?(prepare)
-        end
-        cleanup_stale_journals!
-        build_id
+        FileUtils.mkdir_p(view_dir)
+        target = File.join(view_dir, CURRENT_VIEW)
+        tmp = File.join(view_dir, ".view-tmp-#{SecureRandom.hex(6)}")
+        FileUtils.cp(build_yaml(build_id), tmp)
+        atomic_rename(tmp, target) # 覆盖式原子替换：从不删除 target
+        true
+      ensure
+        FileUtils.rm_rf(tmp) if tmp && File.exist?(tmp)
       end
 
-      # 回滚：current 与 previous 互换（仅切换视图目录，不修改 builds）。
-      #
-      # 失败安全步骤：
-      #   1. previous 移入 .rollback-backup-* journal
-      #   2. current -> previous
-      #   3. journal -> current（完成互换）
-      # 任一步失败都逆序恢复，失败后 current/previous 与操作前完全一致。
-      def rollback!
-        recover_interrupted_state!
-        raise MPK::Error, 'nothing to roll back: no previous build' unless previous_exists?
+      # 刷新所有已存在 token 视图到给定 build 的内容（逐个原子覆盖）。
+      def refresh_public_views(build_id)
+        return unless File.directory?(sub_dir)
 
-        backup = journal_dir('.rollback-backup')
-        prev_backed_up = false
-        current_moved = false
-        begin
-          atomic_rename(previous_dir, backup)
-          prev_backed_up = true
-          atomic_rename(current_dir, previous_dir)
-          current_moved = true
-          atomic_rename(backup, current_dir)
-          backup = nil
-        rescue StandardError
-          restore_after_failed_rollback(backup, prev_backed_up, current_moved)
-          raise
+        Dir.children(sub_dir).each do |token|
+          next if token.start_with?('.')
+
+          dir = File.join(sub_dir, token)
+          next unless File.directory?(dir)
+
+          write_view_file(dir, build_id)
         end
-        cleanup_stale_journals!
-        current_build_id
+        true
+      end
+
+      # 本地解析：给定完整 token 返回其视图对应内容来源（当前 current build 的 YAML）。
+      def subscription_source_path(token)
+        return nil unless token_view?(token)
+
+        current = active_state['current']
+        return nil unless current && build_exists?(current)
+
+        build_yaml(current)
       end
 
       private
 
-      # 构造一个完整的新 current 视图目录（真实目录：mihomo.yaml + metadata.json），
-      # 之后整体 rename 就位，避免半成品视图被客户端读到。
-      def build_view_dir(build_id)
-        dir = journal_dir('.view')
-        FileUtils.mkdir_p(dir)
-        FileUtils.cp(build_yaml(build_id), File.join(dir, CURRENT_VIEW))
-        write_view_metadata(dir, build_id)
-        dir
+      # 校验一个目录是否构成可被引用的 immutable build。此校验同时用于
+      # staging 落盘前的完整性确认与 builds/ 中残留目录的过滤。
+      def valid_build_dir?(dir, build_id)
+        yaml = File.join(dir, CURRENT_VIEW)
+        metadata_path = File.join(dir, 'metadata.json')
+        return false unless File.file?(yaml) && File.file?(metadata_path)
+
+        metadata = JSON.parse(File.read(metadata_path, encoding: 'UTF-8'))
+        sha256 = metadata['sha256']
+        metadata.is_a?(Hash) && metadata['build_id'] == build_id &&
+          sha256.is_a?(String) && sha256.match?(/\A[0-9a-f]{64}\z/) &&
+          Digest::SHA256.file(yaml).hexdigest == sha256
+      rescue JSON::ParserError, TypeError, SystemCallError
+        false
       end
 
-      # 单独抽出的 rename，便于故障注入测试（子类可在指定次数抛错）。
+      # active-state.json 原子替换（tmp + rename）。
+      def write_active(payload)
+        tmp = File.join(@root, ".active-state.json.tmp-#{SecureRandom.hex(6)}")
+        File.write(tmp, JSON.pretty_generate(payload))
+        atomic_rename(tmp, active_file)
+      ensure
+        FileUtils.rm_rf(tmp) if tmp && File.exist?(tmp)
+      end
+
+      # 自愈：把每个已存在 token 视图刷新为当前 current 的内容。
+      # 覆盖“active 已切但某视图未跟上（崩溃/中断）”的滞后窗口。
+      def reconcile_public_views!
+        current = active_state['current']
+        return unless current && build_exists?(current)
+        return unless File.directory?(sub_dir)
+
+        Dir.children(sub_dir).each do |token|
+          next if token.start_with?('.')
+
+          dir = File.join(sub_dir, token)
+          next unless File.directory?(dir)
+
+          target = File.join(dir, CURRENT_VIEW)
+          next if File.file?(target) && File.binread(target) == File.binread(build_yaml(current))
+
+          write_view_file(dir, current)
+        end
+      end
+
+      # 原子 rename 包装：便于故障注入测试；生产同 File.rename。
       def atomic_rename(source, target)
         File.rename(source, target)
       end
 
-      # promote! 失败恢复：先恢复 current 槽（若已降级到 previous 槽），
-      # 再把旧 previous 从 journal 备份移回 previous 槽。
-      def restore_after_failed_promote(backup, prev_backed_up, current_demoted)
-        if current_demoted && File.directory?(previous_dir) && !File.directory?(current_dir)
-          atomic_rename(previous_dir, current_dir)
-        end
-        if prev_backed_up && backup && File.directory?(backup) && !File.directory?(previous_dir)
-          atomic_rename(backup, previous_dir)
-        end
+      # View refresh 在 active 切换后失败时的回退。active 文件先原子恢复；随后
+      # 最佳努力将已更新的 token 视图恢复为原 current。恢复本身再次失败也不会
+      # 造成 404：目标文件始终由原子 rename 覆盖，保留的是 old/new 完整内容。
+      def restore_after_view_refresh_failure(original)
+        write_active(original)
+        old_current = original['current']
+        refresh_public_views(old_current) if old_current && build_exists?(old_current)
+      rescue StandardError
+        # 保留触发该回退的原始异常；下一次 init! 会继续 reconcile 视图。
       end
 
-      # rollback! 失败恢复：语义同 promote，把两个槽恢复成操作前状态。
-      def restore_after_failed_rollback(backup, prev_backed_up, current_moved)
-        if current_moved && File.directory?(previous_dir) && !File.directory?(current_dir)
-          atomic_rename(previous_dir, current_dir)
-        end
-        if prev_backed_up && backup && File.directory?(backup) && !File.directory?(previous_dir)
-          atomic_rename(backup, previous_dir)
-        end
-      end
+      def cleanup_stale_staging!
 
-      # 进程在 promote/rollback 中途崩溃后的自愈（仅当权威槽位为空且存在 journal
-      # 备份时恢复，绝不覆盖已有状态）。原子 rename 保证失败时源目录保持原位，
-      # 因此只检查槽位是否为空即可安全判断。
-      def recover_interrupted_state!
-        backup = newest_journal('.rollback-backup')
-        if backup
-          if !File.directory?(current_dir) && File.directory?(previous_dir)
-            # rollback 第 2 步后崩溃：完成互换（backup 即旧 previous -> current）
-            atomic_rename(backup, current_dir)
-          elsif File.directory?(current_dir) && !File.directory?(previous_dir)
-            # rollback 第 1 步后崩溃：撤销（previous 从未被真正切换）
-            atomic_rename(backup, previous_dir)
-          elsif File.directory?(current_dir) && File.directory?(previous_dir)
-            # 互换已生效但清理前崩溃：backup 已无意义，安全删除
-            FileUtils.rm_rf(backup)
-          end
-        end
-        backup = newest_journal('.prev-backup')
-        if backup
-          if File.directory?(current_dir) && !File.directory?(previous_dir)
-            # promote 第 1 步后崩溃：撤销（旧 previous 仍有效）
-            atomic_rename(backup, previous_dir)
-          elsif !File.directory?(current_dir) && File.directory?(previous_dir)
-            # promote 第 2 步后崩溃：恢复操作前状态（previous 槽是旧 current，backup 是旧 previous）
-            atomic_rename(previous_dir, current_dir)
-            atomic_rename(backup, previous_dir)
-          elsif File.directory?(current_dir) && File.directory?(previous_dir)
-            # promote 已完成但清理前崩溃：backup 为被取代的旧 previous，可安全删除
-            FileUtils.rm_rf(backup)
+        STAGING_PREFIXES.each do |prefix|
+          Dir.glob(File.join(@root, "#{prefix}*")).each do |path|
+            FileUtils.rm_rf(path) if File.exist?(path)
           end
         end
       end
 
-      # 成功路径收尾：清除所有过期 journal / 暂存视图目录。
-      # 此时 current/previous 已一致，备份内容均为被取代的旧版本，可安全删除。
-      def cleanup_stale_journals!
-        ['.view-*', '.prev-backup-*', '.rollback-backup-*'].each do |pattern|
-          Dir.glob(File.join(@root, pattern)).each do |path|
-            FileUtils.rm_rf(path) if File.directory?(path)
-          end
-        end
-      end
-
-      def journal_dir(tag)
-        File.join(@root, "#{tag}-#{SecureRandom.hex(6)}")
-      end
-
-      def newest_journal(tag)
-        Dir.glob(File.join(@root, "#{tag}-*"))
-           .select { |path| File.directory?(path) }
-           .max_by { |path| File.mtime(path) }
-      end
-
-      # current/previous 目录内的 metadata.json 仅用于记录 build_id 便于解析；
-      # 真正的 build metadata 在 builds/<id>/metadata.json。
-      def write_view_metadata(dir, build_id)
-        File.write(
-          File.join(dir, 'metadata.json'),
-          JSON.pretty_generate('build_id' => build_id, 'updated_at' => Time.now.utc.iso8601)
-        )
-      end
-
-      def read_view_metadata(dir)
-        path = File.join(dir, 'metadata.json')
-        return nil unless File.file?(path)
-
-        JSON.parse(File.read(path, encoding: 'UTF-8'))
-      rescue JSON::ParserError
-        nil
+      def staging_dir(prefix)
+        File.join(@root, "#{prefix}#{SecureRandom.hex(6)}")
       end
     end
   end

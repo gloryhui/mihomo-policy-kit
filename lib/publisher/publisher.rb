@@ -1,9 +1,7 @@
 # frozen_string_literal: true
 
-require 'fileutils'
 require 'json'
 require 'time'
-require 'securerandom'
 require_relative 'build_id'
 require_relative 'runtime'
 require_relative 'token'
@@ -68,29 +66,21 @@ module MPK
         build_id = BuildId.generate(content, time: Time.now.utc)
         build_id = ensure_unique_build_id(build_id, sha256)
 
-        build_dir = runtime.build_dir(build_id)
-        FileUtils.mkdir_p(build_dir)
-        begin
-          # 先写完整内容，再写 metadata（内容完整后才允许被引用）
-          File.binwrite(runtime.build_yaml(build_id), content)
-          metadata = {
-            'build_id' => build_id,
-            'published_at' => Time.now.utc.iso8601,
-            'sha256' => sha256,
-            'proxies' => stats[:proxies],
-            'proxy_providers' => stats[:proxy_providers],
-            'proxy_groups' => stats[:proxy_groups],
-            'rules' => stats[:rules],
-            'mihomo_tested' => stats[:mihomo_tested]
-          }
-          write_json(runtime.build_metadata_path(build_id), metadata)
-        rescue StandardError
-          # 半成品 build 不得留在 builds/（可能被 find_build_by_sha256 / promote 误用）
-          FileUtils.rm_rf(build_dir) if File.directory?(build_dir)
-          raise
-        end
+        metadata = {
+          'build_id' => build_id,
+          'published_at' => Time.now.utc.iso8601,
+          'sha256' => sha256,
+          'proxies' => stats[:proxies],
+          'proxy_providers' => stats[:proxy_providers],
+          'proxy_groups' => stats[:proxy_groups],
+          'rules' => stats[:rules],
+          'mihomo_tested' => stats[:mihomo_tested]
+        }
+        # YAML + metadata 先在 staging 写完整，再一次性原子 rename 进入 builds/：
+        # 中途崩溃最多遗留 staging，builds/ 只出现完整 build。
+        runtime.commit_build(build_id, content, metadata)
 
-        # 最后才切换 current/previous
+        # 最后才切换 current/previous（单点 active 指针）
         runtime.promote!(build_id)
 
         { build_id: build_id, published: true, current: build_id, previous: runtime.previous_build_id, stats: stats }
@@ -124,18 +114,23 @@ module MPK
         }
       end
 
-      # 创建 token 并建立公开视图：public/sub/<完整 token> -> current。
+      # 创建 token 并建立公开视图：public/sub/<完整 token>/mihomo.yaml（真实文件跟随 current）。
       # 完整 token 只在本方法返回值中一次性出现；token-state 是私有敏感数据，
       # 记录完整 token 用于 filesystem 视图管理（revoke 精确删除），
       # 但普通 list / status / 日志不得输出。
       def create_token(name, public_base_url: nil)
         runtime.init!
         result = tokens.create(name)
-        created = runtime.create_token_view(result[:token])
-        unless created
-          # view 创建失败：回滚 token 记录，避免孤儿状态
+        begin
+          created = runtime.create_token_view(result[:token])
+        rescue MPK::Error
+          # view 创建失败（例如尚无 current build）：回滚 token 记录，避免孤儿状态
           tokens.delete(result[:fingerprint])
-          raise MPK::Error, 'token view creation failed (filesystem symlink unsupported)'
+          raise
+        end
+        unless created
+          tokens.delete(result[:fingerprint])
+          raise MPK::Error, 'token view creation failed'
         end
 
         url = build_sub_url(public_base_url, result[:token])
@@ -177,7 +172,9 @@ module MPK
       def ensure_unique_build_id(build_id, sha256)
         candidate = build_id
         loop do
-          return candidate unless runtime.build_exists?(candidate)
+          # 半成品 / 崩溃残留目录也不得被覆盖；为它们换一个全新 build-id，
+          # 正常 publish 因此不会受污染。
+          return candidate unless File.exist?(runtime.build_dir(candidate))
 
           candidate = BuildId.generate(sha256, time: Time.now.utc)
         end
@@ -190,11 +187,6 @@ module MPK
         end
       end
 
-      def write_json(path, object)
-        tmp = "#{path}.tmp-#{SecureRandom.hex(4)}"
-        File.write(tmp, JSON.pretty_generate(object))
-        FileUtils.mv(tmp, path)
-      end
 
       def build_sub_url(public_base_url, token)
         base = public_base_url.to_s.sub(%r{/+\z}, '')
