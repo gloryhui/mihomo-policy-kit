@@ -44,6 +44,7 @@ jobs:
           ruby -c lib/publisher/publisher.rb
           ruby -c scripts/build.rb
           ruby -c scripts/validate.rb
+          ruby -c scripts/ci_singbox_check.rb
           ruby -c scripts/publisher.rb
           ruby -c test/test_overlay.rb
           ruby -c test/test_build_helpers.rb
@@ -106,6 +107,19 @@ jobs:
         run: |
           ruby test/test_e2e_offline.rb
           ruby test/test_output_e2e.rb
+
+      - name: Official sing-box check (pinned v1.14.0)
+        run: |
+          set -euo pipefail
+          # Pin the official SagerNet release (never `latest`); verify SHA-256
+          # before executing.  The deterministic Ruby validator stays for fine
+          # adapter regressions; the official CLI covers schema/version drift.
+          curl -fsSL -o /tmp/sing-box.tar.gz \
+            https://github.com/SagerNet/sing-box/releases/download/v1.14.0/sing-box-1.14.0-linux-amd64.tar.gz
+          echo "2375de6999f4f56ab46b4fc5ddf26a6aba1d3e61a0f4e7ddec2f4690457d5f63  /tmp/sing-box.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/sing-box.tar.gz -C /tmp
+          ruby scripts/ci_singbox_check.rb > /tmp/sing-box.json
+          /tmp/sing-box-1.14.0-linux-amd64/sing-box check -c /tmp/sing-box.json
 
       - name: Publisher integration (atomic active pointer / token URL)
         run: ruby test/publisher/test_publisher_integration.rb
@@ -233,6 +247,7 @@ jobs:
           ruby -c lib/output_adapters/sing_box.rb
           ruby -c providers/acl4ssr/artifacts.rb
           ruby -c providers/acl4ssr/provider.rb
+          ruby -c scripts/ci_singbox_check.rb
 
       - name: Ruby generic logic tests on Windows
         shell: pwsh
