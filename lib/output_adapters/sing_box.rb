@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'ipaddr'
+
 module MPK
   module OutputAdapters
     class SingBox < Base
@@ -18,8 +20,7 @@ module MPK
 
         document = {
           'outbounds' => [
-            { 'type' => 'direct', 'tag' => 'direct' },
-            { 'type' => 'block', 'tag' => 'block' }
+            { 'type' => 'direct', 'tag' => 'direct' }
           ] + proxies.map { |proxy| render_proxy(proxy) } + Array(policy['proxy-groups']).map { |group| render_group(group) },
           'route' => render_route(policy)
         }
@@ -30,8 +31,15 @@ module MPK
         document = JSON.parse(content)
         tags = Array(document['outbounds']).filter_map { |outbound| outbound['tag'] if outbound.is_a?(Hash) }
         raise Error, 'sing-box adapter output has no outbounds' if tags.empty?
+        # The legacy `block` outbound was removed in sing-box 1.13.0; never emit it.
+        if Array(document['outbounds']).any? { |outbound| outbound.is_a?(Hash) && outbound['type'] == 'block' }
+          raise Error, 'sing-box adapter must not emit the removed block outbound'
+        end
         Array(document.dig('route', 'rules')).each do |rule|
-          target = rule['action'] == 'reject' ? 'block' : rule['outbound']
+          # A reject action has no outbound; only route actions reference one.
+          next if rule['action'] == 'reject'
+
+          target = rule['outbound']
           raise Error, 'sing-box adapter route references missing outbound' unless tags.include?(target)
         end
         final = document.dig('route', 'final')
@@ -49,6 +57,7 @@ module MPK
       private
 
       def render_proxy(proxy)
+        require_ip_server!(proxy)
         case proxy['type'].to_s.downcase
         when 'ss'
           reject_unmapped_fields!(proxy, %w[name type server port cipher password udp])
@@ -115,13 +124,18 @@ module MPK
             'IP-CIDR' => 'ip_cidr',
             'IP-CIDR6' => 'ip_cidr'
           }.fetch(type)
-          target = outbound_target(parts[2])
+          target = parts[2]
           rendered = { key => [parts[1]] }
-          if target == 'block'
+          case target.to_s.upcase
+          when 'REJECT'
+            # Current sing-box expresses rejection as a route action, not an
+            # outbound.  The legacy `block` outbound was removed in 1.13.0.
             rendered['action'] = 'reject'
+          when 'REJECT-DROP'
+            raise Error, 'sing-box adapter does not support REJECT-DROP action'
           else
             rendered['action'] = 'route'
-            rendered['outbound'] = target
+            rendered['outbound'] = outbound_target(target)
           end
           rules << rendered
         end
@@ -132,11 +146,31 @@ module MPK
       def outbound_target(name)
         case name.to_s
         when 'DIRECT' then 'direct'
-        when 'REJECT' then 'block'
-        when 'REJECT-DROP'
-          raise Error, 'sing-box adapter does not support REJECT-DROP action'
+        when 'REJECT', 'REJECT-DROP'
+          # A selector member or route.final cannot express rejection as an
+          # outbound in current sing-box; hard-fail rather than fabricate a
+          # removed `block` outbound.
+          raise Error, 'sing-box adapter cannot express REJECT as an outbound target in current sing-box'
         else name.to_s
         end
+      end
+
+      # V0.4 keeps DNS out of scope, but sing-box 1.14 requires a resolver for
+      # outbounds whose server address is a hostname.  Accept only IP-literal
+      # servers and hard-fail on hostnames rather than emitting an incomplete
+      # config.  The message never includes password/UUID/token.
+      def require_ip_server!(proxy)
+        server = proxy['server'].to_s
+        return if ip_literal?(server)
+
+        raise Error, "sing-box adapter requires an IP-literal server (V0.4 does not convert DNS/domain_resolver); proxy #{proxy['name']} uses a hostname"
+      end
+
+      def ip_literal?(value)
+        IPAddr.new(value)
+        true
+      rescue IPAddr::InvalidAddressError
+        false
       end
     end
   end

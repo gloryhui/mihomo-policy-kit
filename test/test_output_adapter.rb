@@ -132,6 +132,45 @@ class OutputAdapterTest < Minitest::Test
     assert_includes group_error.message, 'does not support proxy group type: url-test'
   end
 
+  # Sol Review #3 (P0-1): sing-box 1.13+ removed the legacy `block` outbound.
+  def test_sing_box_does_not_emit_block_outbound_and_maps_reject_to_action
+    sing_box = JSON.parse(adapter('sing-box').render(supported_policy))
+    outbound_types = sing_box.fetch('outbounds').map { |outbound| outbound['type'] }
+    refute_includes outbound_types, 'block'
+
+    policy = supported_policy
+    policy['rules'] = ['DOMAIN-SUFFIX,ads.example.invalid,REJECT', 'MATCH,Final']
+    rendered = JSON.parse(adapter('sing-box').render(policy))
+    reject_rule = rendered.dig('route', 'rules').find { |rule| rule['domain_suffix'] == ['ads.example.invalid'] }
+    assert_equal 'reject', reject_rule['action']
+    refute reject_rule.key?('outbound')
+  end
+
+  def test_sing_box_rejects_reject_as_selector_member_or_final
+    policy = supported_policy
+    policy['proxy-groups'][0]['proxies'] = ['Fake-SS', 'REJECT']
+    error = assert_raises(MPK::Error) { adapter('sing-box').render(policy) }
+    assert_includes error.message, 'cannot express REJECT as an outbound target'
+
+    final_policy = supported_policy
+    final_policy['rules'] = ['DOMAIN-SUFFIX,example.invalid,Global', 'MATCH,REJECT']
+    final_error = assert_raises(MPK::Error) { adapter('sing-box').render(final_policy) }
+    assert_includes final_error.message, 'cannot express REJECT as an outbound target'
+  end
+
+  # Sol Review #3 (P0-2): sing-box 1.14 requires a resolver for hostname
+  # servers; V0.4 keeps DNS out of scope, so only IP-literal servers are valid.
+  def test_sing_box_requires_ip_literal_server
+    assert adapter('sing-box').render(supported_policy)
+
+    policy = supported_policy
+    policy['proxies'][0]['server'] = 'proxy.example.invalid'
+    policy['proxies'][0]['password'] = 'VERY_SECRET_SINGBOX_PASSWORD'
+    error = assert_raises(MPK::Error) { adapter('sing-box').render(policy) }
+    assert_includes error.message, 'requires an IP-literal server'
+    refute_includes error.message, 'VERY_SECRET_SINGBOX_PASSWORD'
+  end
+
   def test_loon_and_surge_preserve_vmess_tls_and_trojan_websocket_details
     policy = supported_policy
     policy['proxies'][1].merge!('network' => 'ws', 'tls' => true, 'sni' => 'vmess.example.invalid',
