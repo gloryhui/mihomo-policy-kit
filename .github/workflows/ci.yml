@@ -27,6 +27,13 @@ jobs:
           ruby -c lib/build_helpers.rb
           ruby -c lib/provider_manifest.rb
           ruby -c lib/provider_runner.rb
+          ruby -c lib/output_adapter.rb
+          ruby -c lib/output_adapters/base.rb
+          ruby -c lib/output_adapters/mihomo.rb
+          ruby -c lib/output_adapters/stash.rb
+          ruby -c lib/output_adapters/loon.rb
+          ruby -c lib/output_adapters/surge.rb
+          ruby -c lib/output_adapters/sing_box.rb
           ruby -c providers/acl4ssr/artifacts.rb
           ruby -c providers/acl4ssr/provider.rb
           ruby -c lib/publisher.rb
@@ -43,6 +50,8 @@ jobs:
           ruby -c test/test_e2e_offline.rb
           ruby -c test/test_provider_manifest.rb
           ruby -c test/test_acl4ssr_provider.rb
+          ruby -c test/test_output_adapter.rb
+          ruby -c test/test_output_e2e.rb
           ruby -c test/publisher/test_build_id.rb
           ruby -c test/publisher/test_token.rb
           ruby -c test/publisher/test_publisher.rb
@@ -80,6 +89,7 @@ jobs:
           ruby test/test_build_helpers.rb
           ruby test/test_provider_manifest.rb
           ruby test/test_acl4ssr_provider.rb
+          ruby test/test_output_adapter.rb
           ruby test/publisher/test_build_id.rb
           ruby test/publisher/test_token.rb
           ruby test/publisher/test_publisher.rb
@@ -93,7 +103,9 @@ jobs:
         run: bash test/providers/test_smart_config_kit.sh
 
       - name: Offline end-to-end integration test
-        run: ruby test/test_e2e_offline.rb
+        run: |
+          ruby test/test_e2e_offline.rb
+          ruby test/test_output_e2e.rb
 
       - name: Publisher integration (atomic active pointer / token URL)
         run: ruby test/publisher/test_publisher_integration.rb
@@ -212,6 +224,13 @@ jobs:
           ruby -c scripts/publisher.rb
           ruby -c lib/provider_manifest.rb
           ruby -c lib/provider_runner.rb
+          ruby -c lib/output_adapter.rb
+          ruby -c lib/output_adapters/base.rb
+          ruby -c lib/output_adapters/mihomo.rb
+          ruby -c lib/output_adapters/stash.rb
+          ruby -c lib/output_adapters/loon.rb
+          ruby -c lib/output_adapters/surge.rb
+          ruby -c lib/output_adapters/sing_box.rb
           ruby -c providers/acl4ssr/artifacts.rb
           ruby -c providers/acl4ssr/provider.rb
 
@@ -222,6 +241,8 @@ jobs:
           ruby test/test_build_helpers.rb
           ruby test/test_provider_manifest.rb
           ruby test/test_acl4ssr_provider.rb
+          ruby test/test_output_adapter.rb
+          ruby test/test_output_e2e.rb
           ruby test/publisher/test_build_id.rb
           ruby test/publisher/test_token.rb
           # Shared-current Publisher filesystem semantics use Linux symlinks and run in linux.

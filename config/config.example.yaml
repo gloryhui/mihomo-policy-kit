@@ -16,8 +16,8 @@ provider_options:
     # 当前项目只支持 Normal / 非 Smart 版本。
     forbid_smart: true
   acl4ssr:
-    # ACL4SSR consumes official raw rule-provider artifacts; no online converter is used.
-    rules_url: https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Providers/LocalAreaNetwork.yaml
+    # ACL4SSR uses its provider-local official-artifact allowlist.
+    {}
 
 custom_rules:
   files:
@@ -55,3 +55,10 @@ validation:
 
 output:
   mihomo: ./dist/mihomo.yaml
+  stash: ./dist/stash.yaml
+  loon: ./dist/loon.conf
+  surge: ./dist/surge.conf
+  sing-box: ./dist/sing-box.json
+
+# Omit this key to preserve legacy Mihomo-only output.
+# outputs: [mihomo, stash, loon, surge, sing-box]

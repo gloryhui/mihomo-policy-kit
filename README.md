@@ -4,8 +4,8 @@
 
 它不试图重新发明一套分流规则，而是把优秀的上游分流项目当作 Provider，再叠加你自己的规则、校验与发布流程，最终生成一份可直接被 Clash Party、Clash Verge Rev、Nikki、Clash Meta / ClashMi 等 Mihomo 客户端订阅的 `mihomo.yaml`。
 
-> 当前阶段：**v0.3**。v0.1 已完成 Smart-Config-Kit **Normal / 非 Smart** 构建链路与真实客户端验收；
-> v0.2 增加私有 HTTPS 订阅发布器（immutable builds / current / previous / rollback / 多 Token）。
+> 当前阶段：**v0.4**。v0.1 已完成 Smart-Config-Kit **Normal / 非 Smart** 构建链路与真实客户端验收；
+> v0.2 增加私有 HTTPS 订阅发布器，v0.3 增加第二 Provider，v0.4 增加严格的多客户端 Output Adapter。
 
 ## 为什么做这个项目
 
@@ -33,9 +33,9 @@ DNS / 公共补丁
       ↓
 结构校验 + mihomo -t
       ↓
-dist/mihomo.yaml
+Output Adapter（Mihomo / Stash / Loon / Surge / sing-box）
       ↓
-HTTPS 私有订阅（V0.2 已实现：publish / current / previous / rollback / Token）
+HTTPS 私有订阅（V0.2：当前仅发布 Mihomo YAML）
       ↓
 Clash Party / Clash Verge / Nikki / Android Mihomo ...
 ```
@@ -177,6 +177,16 @@ dist/mihomo.yaml
 ```powershell
 ruby scripts/validate.rb dist/mihomo.yaml
 ```
+
+### 5.1 多客户端输出（V0.4）
+
+默认仍只生成 `dist/mihomo.yaml`，以保持旧配置行为。若要生成多个独立客户端产物，在配置中显式选择：
+
+```yaml
+outputs: [mihomo, stash, loon, surge, sing-box]
+```
+
+产物默认是 `dist/stash.yaml`、`dist/loon.conf`、`dist/surge.conf` 与 `dist/sing-box.json`。它们不是同一份 YAML 的改名；不支持的协议/规则会严格失败，绝不静默丢节点或改为 DIRECT。完整能力矩阵与结构校验边界见 [`docs/output-adapters.md`](docs/output-adapters.md)。当前实际 iOS 客户端为 `unconfirmed`，不要据此假定用户已使用其中任一个。
 
 ### 6. 诊断
 
@@ -368,6 +378,8 @@ bash test/providers/test_smart_config_kit.sh
 
 # 离线端到端构建测试（需要 bash，使用 fixture 不走网络）
 ruby test/test_e2e_offline.rb
+ruby test/test_output_adapter.rb
+ruby test/test_output_e2e.rb
 ```
 
 CI（`.github/workflows/ci.yml`）包含：
@@ -387,12 +399,15 @@ mihomo-policy-kit/
 │   └── groups.smart-config-kit.yaml
 ├── docs/
 │   ├── architecture.md
-│   └── custom-rules.md
+│   ├── custom-rules.md
+│   └── output-adapters.md
 ├── lib/
 │   ├── build_helpers.rb
 │   ├── overlay.rb
 │   ├── provider_manifest.rb
 │   ├── provider_runner.rb
+│   ├── output_adapter.rb
+│   ├── output_adapters/
 │   └── publisher/
 │       ├── build_id.rb
 │       ├── runtime.rb
@@ -486,10 +501,9 @@ mihomo-policy-kit/
 - [x] Provider manifest 与 generic runner
 - [x] ACL4SSR Provider（官方 raw rule-provider 引用）
 - [x] 双 Provider 离线 E2E 与逻辑 target 映射
+- [x] Stash / Loon / Surge / sing-box 严格 Output Adapter
 - [ ] 其他社区分流 Provider
-- [ ] Stash 输出
-- [ ] Loon / Surge / Shadowrocket 输出
-- [ ] sing-box 输出
+- [ ] Shadowrocket 输出
 
 > 注意：Stash / Loon / Surge / sing-box 等多客户端输出属于后续阶段（#4），v0.1 只输出 Mihomo YAML。
 

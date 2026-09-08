@@ -442,4 +442,20 @@ module BuildHelpers
       promote_file(tmp.path, output_path)
     end
   end
+
+  # Rendered non-Mihomo adapters are validated by their adapter before reaching
+  # this method.  Keep the same staged candidate + recoverable promotion used
+  # for Mihomo YAML so a failed adapter write never truncates a good artifact.
+  def write_text_atomic(content, output_path, extension: '.tmp')
+    FileUtils.mkdir_p(File.dirname(output_path))
+
+    Tempfile.create(['mpk-candidate-', extension], File.dirname(output_path)) do |tmp|
+      tmp.binmode
+      tmp.write(content)
+      tmp.flush
+      tmp.fsync
+      tmp.close if tmp.respond_to?(:close) && !tmp.closed?
+      promote_file(tmp.path, output_path)
+    end
+  end
 end

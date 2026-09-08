@@ -15,7 +15,7 @@ Source -> Provider -> Overlay -> Output
 - **Overlay**：用户自定义规则、DNS 与公共补丁
 - **Output**：Mihomo / Stash / Surge / Loon / sing-box 等客户端产物
 
-v0.3 当前实现：
+v0.4 当前实现：
 
 ```text
 Mihomo Source
@@ -23,7 +23,8 @@ Mihomo Source
        -> Smart-Config-Kit Normal
        -> ACL4SSR
   -> Custom Overlay
-  -> Mihomo YAML
+  -> Output Adapter
+       -> Mihomo YAML / Stash YAML / Loon conf / Surge conf / sing-box JSON
 ```
 
 ## 2. 为什么不 Fork Smart-Config-Kit
@@ -221,11 +222,13 @@ v0.1 提供两种模式。
 
 `dist/` 永远视为敏感产物目录，不提交 Git。
 
-v0.1 输出：
+默认输出保持为 Mihomo：
 
 ```text
 dist/mihomo.yaml
 ```
+
+V0.4 在 Overlay / 验证后执行固定的 Output Adapter registry，而不是让 `build.rb` 知道客户端专有转换。默认仍是 Mihomo-only；配置 `outputs` 后可额外生成 `stash.yaml`、`loon.conf`、`surge.conf` 和 `sing-box.json`。每个 adapter 先 render + structural validate，所有选择的 adapter 均成功后才开始以 staged candidate + recoverable promotion 写文件。完整能力矩阵、严格失败边界与验证层级见 [`docs/output-adapters.md`](output-adapters.md)。V0.2 Publisher 仍只发布 Mihomo YAML，不为其他产物声明稳定 HTTPS URL。
 
 V0.2 已实现 Publisher（见 `docs/publisher.md`）：
 
