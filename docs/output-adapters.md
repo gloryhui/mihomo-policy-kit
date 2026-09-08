@@ -34,6 +34,17 @@ sing-box output is standard JSON. Selectors contain outbound tags, and route rul
 
 `vless` is deliberately rejected by Loon/Surge/sing-box adapters in this release even where a client has VLESS support: translating Reality/XTLS and transport details without a complete implementation would be a silent downgrade. `mieru` is rejected by every non-Mihomo adapter. sing-box also rejects its deprecated `GEOIP` rule, Clash-only rule options, and non-`select` proxy group types rather than generating a configuration that current sing-box versions may not honor. Loon/Surge proxy groups support `select` / `url-test` / `fallback` only. Future expansion must add a complete protocol conversion and fixture tests before widening this matrix.
 
+## Proxy group parameters（严格边界）
+
+`url-test` / `fallback` 组的行为参数只映射到目标客户端**当前官方明确支持且语义对应**的字段；Mihomo 的 group key 不会原样复制。未知或当前无等价实现的字段一律 hard fail，绝不静默丢弃或伪造等价语义。
+
+| Client | `url-test` 支持 | `fallback` 支持 | 明确 hard fail |
+| --- | --- | --- | --- |
+| Loon | `url` / `interval` / `tolerance` | `url` / `interval` | `lazy`（Loon 无等价项） |
+| Surge | `interval` / `tolerance` | `interval` | group-level `url`（当前 Surge 的 group line `url=` 无效果，测试 URL 应来自 policy `test-url` 或全局 `proxy-test-url` / `internet-test-url`）；`lazy`（无已证明等价项） |
+
+`select` 组只允许 `name` / `type` / `proxies`。任何不在上表白名单内的 group 字段都会让对应 adapter 失败，错误只列出 capability 名称，不打印敏感值。
+
 ## Selecting outputs
 
 Old configurations remain Mihomo-only. Add `outputs` to opt into other artifacts:

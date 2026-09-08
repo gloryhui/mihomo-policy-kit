@@ -108,11 +108,15 @@ module MPK
           reject_unmapped_group_fields!(group, %w[name type proxies])
           []
         when 'url-test'
-          reject_unmapped_group_fields!(group, %w[name type proxies url interval tolerance lazy])
-          group_param_parts(group, %w[url interval tolerance lazy])
+          # Loon url-test supports url/interval/tolerance.  `lazy` has no Loon
+          # equivalent, so it is hard-failed rather than silently emitted.
+          reject_unmapped_group_fields!(group, %w[name type proxies url interval tolerance])
+          group_param_parts(group, %w[url interval tolerance])
         when 'fallback'
-          reject_unmapped_group_fields!(group, %w[name type proxies url interval lazy])
-          group_param_parts(group, %w[url interval lazy])
+          # Loon fallback supports url/interval.  `lazy` has no Loon
+          # equivalent, so it is hard-failed.
+          reject_unmapped_group_fields!(group, %w[name type proxies url interval])
+          group_param_parts(group, %w[url interval])
         else
           []
         end

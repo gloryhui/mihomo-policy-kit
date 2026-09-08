@@ -186,25 +186,56 @@ class OutputAdapterTest < Minitest::Test
     assert_includes legacy_surge, 'vmess-aead=false'
   end
 
-  # Sol Review #3 (P1): url-test/fallback group params must be mapped, not dropped.
-  def test_surge_and_loon_map_url_test_and_fallback_group_params
+  # Sol Review #3 (P1): url-test/fallback group params must be mapped to the
+  # target client's real semantics, not copied verbatim from Mihomo keys.
+  def test_surge_maps_supported_group_params_and_rejects_unsupported
+    # Surge url-test supports interval/tolerance; fallback supports interval.
     policy = supported_policy
     policy['proxy-groups'] = [
-      { 'name' => 'Auto', 'type' => 'url-test', 'proxies' => ['Fake-SS', 'Fake-VMess'],
-        'url' => 'http://www.gstatic.com/generate_204', 'interval' => 300, 'tolerance' => 100, 'lazy' => true },
-      { 'name' => 'Backup', 'type' => 'fallback', 'proxies' => ['Fake-SS', 'Fake-VMess'],
-        'url' => 'http://www.gstatic.com/generate_204', 'interval' => 600, 'lazy' => false },
+      { 'name' => 'Auto', 'type' => 'url-test', 'proxies' => ['Fake-SS', 'Fake-VMess'], 'interval' => 300, 'tolerance' => 100 },
+      { 'name' => 'Backup', 'type' => 'fallback', 'proxies' => ['Fake-SS', 'Fake-VMess'], 'interval' => 600 },
       { 'name' => 'Final', 'type' => 'select', 'proxies' => ['Auto', 'Backup', 'DIRECT'] }
     ]
     policy['rules'] = ['DOMAIN-SUFFIX,example.invalid,Auto', 'MATCH,Final']
 
     surge = adapter('surge').render(policy)
-    assert_includes surge, 'Auto = url-test, Fake-SS, Fake-VMess, url=http://www.gstatic.com/generate_204, interval=300, tolerance=100, lazy=true'
-    assert_includes surge, 'Backup = fallback, Fake-SS, Fake-VMess, url=http://www.gstatic.com/generate_204, interval=600, lazy=false'
+    assert_includes surge, 'Auto = url-test, Fake-SS, Fake-VMess, interval=300, tolerance=100'
+    assert_includes surge, 'Backup = fallback, Fake-SS, Fake-VMess, interval=600'
+
+    # group-level url has no effect in current Surge -> hard fail
+    url_policy = supported_policy
+    url_policy['proxy-groups'][0] = { 'name' => 'US', 'type' => 'url-test', 'proxies' => ['Fake-SS', 'DIRECT'], 'url' => 'http://www.gstatic.com/generate_204' }
+    url_error = assert_raises(MPK::Error) { adapter('surge').render(url_policy) }
+    assert_includes url_error.message, 'does not support proxy group fields'
+
+    # lazy has no proven Surge equivalent -> hard fail
+    lazy_policy = supported_policy
+    lazy_policy['proxy-groups'][0] = { 'name' => 'US', 'type' => 'url-test', 'proxies' => ['Fake-SS', 'DIRECT'], 'lazy' => true }
+    lazy_error = assert_raises(MPK::Error) { adapter('surge').render(lazy_policy) }
+    assert_includes lazy_error.message, 'does not support proxy group fields'
+  end
+
+  def test_loon_maps_supported_group_params_and_rejects_lazy
+    # Loon url-test supports url/interval/tolerance; fallback supports url/interval.
+    policy = supported_policy
+    policy['proxy-groups'] = [
+      { 'name' => 'Auto', 'type' => 'url-test', 'proxies' => ['Fake-SS', 'Fake-VMess'],
+        'url' => 'http://www.gstatic.com/generate_204', 'interval' => 300, 'tolerance' => 100 },
+      { 'name' => 'Backup', 'type' => 'fallback', 'proxies' => ['Fake-SS', 'Fake-VMess'],
+        'url' => 'http://www.gstatic.com/generate_204', 'interval' => 600 },
+      { 'name' => 'Final', 'type' => 'select', 'proxies' => ['Auto', 'Backup', 'DIRECT'] }
+    ]
+    policy['rules'] = ['DOMAIN-SUFFIX,example.invalid,Auto', 'MATCH,Final']
 
     loon = adapter('loon').render(policy)
-    assert_includes loon, 'Auto = url-test,Fake-SS,Fake-VMess,url=http://www.gstatic.com/generate_204,interval=300,tolerance=100,lazy=true'
-    assert_includes loon, 'Backup = fallback,Fake-SS,Fake-VMess,url=http://www.gstatic.com/generate_204,interval=600,lazy=false'
+    assert_includes loon, 'Auto = url-test,Fake-SS,Fake-VMess,url=http://www.gstatic.com/generate_204,interval=300,tolerance=100'
+    assert_includes loon, 'Backup = fallback,Fake-SS,Fake-VMess,url=http://www.gstatic.com/generate_204,interval=600'
+
+    # lazy has no Loon equivalent -> hard fail
+    lazy_policy = supported_policy
+    lazy_policy['proxy-groups'][0] = { 'name' => 'US', 'type' => 'url-test', 'proxies' => ['Fake-SS', 'DIRECT'], 'lazy' => true }
+    lazy_error = assert_raises(MPK::Error) { adapter('loon').render(lazy_policy) }
+    assert_includes lazy_error.message, 'does not support proxy group fields'
   end
 
   # Sol Review #3 (P1): unknown group fields must hard-fail, not silently drop.

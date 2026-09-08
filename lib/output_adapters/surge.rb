@@ -118,11 +118,17 @@ module MPK
           reject_unmapped_group_fields!(group, %w[name type proxies])
           []
         when 'url-test'
-          reject_unmapped_group_fields!(group, %w[name type proxies url interval tolerance lazy])
-          group_param_parts(group, %w[url interval tolerance lazy])
+          # Current Surge url-test supports interval/tolerance.  A group-line
+          # `url=` has no effect in current Surge (test URL comes from policy
+          # test-url / global proxy-test-url), and `lazy` has no proven
+          # equivalent, so both are hard-failed rather than silently emitted.
+          reject_unmapped_group_fields!(group, %w[name type proxies interval tolerance])
+          group_param_parts(group, %w[interval tolerance])
         when 'fallback'
-          reject_unmapped_group_fields!(group, %w[name type proxies url interval lazy])
-          group_param_parts(group, %w[url interval lazy])
+          # Current Surge fallback supports interval.  url/lazy are not
+          # semantically equivalent on Surge, so they are hard-failed.
+          reject_unmapped_group_fields!(group, %w[name type proxies interval])
+          group_param_parts(group, %w[interval])
         else
           []
         end
