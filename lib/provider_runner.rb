@@ -47,7 +47,10 @@ module MPK
         normalized = 'provider_local' if normalized == 'local_script'
         normalized = 'provider_remote' if normalized == 'remote_url'
         value = v.to_s
-        value = BuildHelpers.bash_path_for(value) if normalized == 'provider_local'
+        # Provider-local paths historically resolve from the repository root,
+        # not the caller's cwd.  `bin/mpk` may be invoked by absolute path from
+        # a scheduler or another directory, so preserve that contract here.
+        value = BuildHelpers.bash_path_for(File.expand_path(value, @root_dir)) if normalized == 'provider_local'
         env["MPK_#{normalized.upcase}"] = value
       end
       env

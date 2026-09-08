@@ -82,7 +82,7 @@ providers/acl4ssr/manifest.yaml + provider.rb
 
 输出仍然写回输入 YAML。
 
-ACL4SSR runner 同样写回输入 YAML，保留 `proxies` / `proxy-providers`，创建区域与业务策略组，并引用 ACL4SSR 官方仓库的 raw rule-provider URL；规则正文不复制到本仓库。
+ACL4SSR runner 同样写回输入 YAML，保留 `proxies` / `proxy-providers`，创建区域与业务策略组，并引用 ACL4SSR 官方 YAML `payload:` rule-provider URL；规则正文不复制到本仓库。当前明确支持局域网、广告、国内域名/IP、AI、Google、Microsoft、Telegram、Netflix、YouTube 与 ProxyGFWlist。规则顺序是局域网/广告/国内直连、AI 专组、海外代理、最后才是 Final；静态节点在 Ruby 端按地区过滤，`proxy-providers` 则以 Mihomo 的 `use` + `filter` 引用运行时节点。
 
 **限制**：Smart-Config-Kit 仍只允许 `oc-normal`（Normal / 非 Smart）版本；`mihomo-smart` 与
 LightGBM 版本会在 `VERSION_TAG` 校验阶段被拒绝。

@@ -17,7 +17,7 @@ provider_options:
     forbid_smart: true
   acl4ssr:
     # ACL4SSR consumes official raw rule-provider artifacts; no online converter is used.
-    rules_url: https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Providers/Ruleset/LocalAreaNetwork.list
+    rules_url: https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Providers/LocalAreaNetwork.yaml
 
 custom_rules:
   files:

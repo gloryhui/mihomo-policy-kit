@@ -6,4 +6,4 @@ runner:
   entrypoint: provider.rb
 group_map: groups.yaml
 options:
-  rules_url: https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Providers/Ruleset/LocalAreaNetwork.list
+  rules_url: https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Providers/LocalAreaNetwork.yaml

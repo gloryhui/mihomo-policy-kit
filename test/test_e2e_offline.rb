@@ -232,11 +232,14 @@ class OfflineE2ETest < Minitest::Test
       assert_operator Array(doc['proxies']).length, :>, 0
       assert_includes doc['proxy-groups'].map { |g| g['name'] }, 'ACL4SSR Global'
       assert doc.dig('rule-providers', 'acl4ssr-lan')
-      %w[acl4ssr-ads acl4ssr-google acl4ssr-microsoft acl4ssr-telegram acl4ssr-netflix].each do |provider|
+      %w[acl4ssr-ads acl4ssr-china-domain acl4ssr-china-ip acl4ssr-ai acl4ssr-google acl4ssr-microsoft acl4ssr-telegram acl4ssr-netflix acl4ssr-proxy].each do |provider|
         assert doc.dig('rule-providers', provider), "missing #{provider}"
       end
       assert_equal 'DOMAIN-SUFFIX,experientiallabs.ai,ACL4SSR Global', doc['rules'].first
       assert_equal 'DIRECT', doc['rules'][1].split(',').last
+      assert_includes doc['rules'], 'RULE-SET,acl4ssr-ai,ACL4SSR AI'
+      assert_includes doc['rules'], 'RULE-SET,acl4ssr-china-domain,DIRECT'
+      assert_equal 'MATCH,ACL4SSR Final', doc['rules'].last
     end
   end
 end

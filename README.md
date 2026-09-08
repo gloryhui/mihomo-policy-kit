@@ -70,6 +70,8 @@ mihomo-policy-kit 负责：
 Provider 通过各自目录下的 `manifest.yaml` 声明输入/输出格式、runner、group map 与选项；主构建器不包含 Provider 专有分支。选择 Provider 只需修改
 `config/config.yaml` 的 `provider` 字段，用户规则仍使用 `ai`、`global`、`us` 等逻辑 target。
 
+ACL4SSR 使用其官方 YAML `payload:` artifacts：局域网、广告、国内域名/IP、AI、Google、Microsoft、Telegram、Netflix、YouTube 和 ProxyGFWlist。生成的规则按局域网/广告/国内直连、AI 专组、海外代理、Final 的顺序处理；上游规则正文不会复制到本仓库。
+
 上游项目：<https://github.com/IvanSolis1989/Smart-Config-Kit>
 
 ## 当前支持

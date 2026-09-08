@@ -1,0 +1,6 @@
+proxy-providers:
+  fixture-provider:
+    type: http
+    url: https://example.invalid/subscription.yaml
+    path: ./providers/fixture-provider.yaml
+    interval: 3600
