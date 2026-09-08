@@ -10,8 +10,8 @@ mihomo-policy-kit (mpk)
 
 Usage:
   ./bin/mpk doctor
-  ./bin/mpk build [config.yaml] [upstream|china_compat] [output.yaml]
-    (provider is selected in config.yaml: smart-config-kit or acl4ssr)
+  ./bin/mpk build [config.yaml] [upstream|china_compat] [mihomo-output.yaml]
+    (provider is selected in config.yaml; outputs defaults to Mihomo only)
   ./bin/mpk validate <mihomo.yaml>
   ./bin/mpk publish <mihomo.yaml>
   ./bin/mpk publisher status
@@ -125,7 +125,7 @@ case "${1:-}" in
     cmd_publisher "$@"
     ;;
   version)
-    echo "mihomo-policy-kit v0.3.0"
+    echo "mihomo-policy-kit v0.4.0"
     ;;
   -h|--help|help|"")
     usage

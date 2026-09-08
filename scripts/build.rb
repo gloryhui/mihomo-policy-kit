@@ -10,6 +10,7 @@ require 'overlay'
 require 'build_helpers'
 require 'provider_manifest'
 require 'provider_runner'
+require 'output_adapter'
 
 begin
   config_path = ARGV[0] || File.join(ROOT_DIR, 'config', 'config.yaml')
@@ -70,10 +71,12 @@ begin
 
     overlay.apply!(transformed, root_dir: ROOT_DIR)
     stats = overlay.validate!(transformed, source_proxy_count: source_proxy_count)
-    output_path = BuildHelpers.absolute(BuildHelpers.dig(config, 'output', 'mihomo', default: './dist/mihomo.yaml'))
-    BuildHelpers.write_and_test(transformed, output_path)
+    # V0.4 Output Pipeline: all requested adapters render and validate before
+    # any output is promoted.  No client-specific branch belongs in build.rb.
+    rendered_outputs = MPK::OutputPipeline.render_all(transformed, config)
+    MPK::OutputPipeline.write_all(rendered_outputs)
     puts '[build] success'
-    puts "[build] output=#{output_path}"
+    rendered_outputs.each { |adapter, _content, path| puts "[build] output #{adapter.id}=#{path}" }
     puts "[build] proxies=#{stats[:proxies]} proxy-providers=#{stats[:proxy_providers]} proxy-groups=#{stats[:proxy_groups]} rules=#{stats[:rules]}"
   end
 rescue MPK::Error => e
