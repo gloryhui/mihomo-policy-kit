@@ -174,4 +174,75 @@ class OutputAdapterTest < Minitest::Test
       assert_equal JSON.parse(content), JSON.parse(File.read(output))
     end
   end
+
+  # Sol Review #3 (P0): Surge VMess must emit the AEAD decision explicitly.
+  def test_surge_vmess_aead_flag_reflects_alter_id
+    surge = adapter('surge').render(supported_policy)
+    assert_includes surge, 'vmess-aead=true'
+
+    legacy = supported_policy
+    legacy['proxies'][1]['alterId'] = 1
+    legacy_surge = adapter('surge').render(legacy)
+    assert_includes legacy_surge, 'vmess-aead=false'
+  end
+
+  # Sol Review #3 (P1): url-test/fallback group params must be mapped, not dropped.
+  def test_surge_and_loon_map_url_test_and_fallback_group_params
+    policy = supported_policy
+    policy['proxy-groups'] = [
+      { 'name' => 'Auto', 'type' => 'url-test', 'proxies' => ['Fake-SS', 'Fake-VMess'],
+        'url' => 'http://www.gstatic.com/generate_204', 'interval' => 300, 'tolerance' => 100, 'lazy' => true },
+      { 'name' => 'Backup', 'type' => 'fallback', 'proxies' => ['Fake-SS', 'Fake-VMess'],
+        'url' => 'http://www.gstatic.com/generate_204', 'interval' => 600, 'lazy' => false },
+      { 'name' => 'Final', 'type' => 'select', 'proxies' => ['Auto', 'Backup', 'DIRECT'] }
+    ]
+    policy['rules'] = ['DOMAIN-SUFFIX,example.invalid,Auto', 'MATCH,Final']
+
+    surge = adapter('surge').render(policy)
+    assert_includes surge, 'Auto = url-test, Fake-SS, Fake-VMess, url=http://www.gstatic.com/generate_204, interval=300, tolerance=100, lazy=true'
+    assert_includes surge, 'Backup = fallback, Fake-SS, Fake-VMess, url=http://www.gstatic.com/generate_204, interval=600, lazy=false'
+
+    loon = adapter('loon').render(policy)
+    assert_includes loon, 'Auto = url-test,Fake-SS,Fake-VMess,url=http://www.gstatic.com/generate_204,interval=300,tolerance=100,lazy=true'
+    assert_includes loon, 'Backup = fallback,Fake-SS,Fake-VMess,url=http://www.gstatic.com/generate_204,interval=600,lazy=false'
+  end
+
+  # Sol Review #3 (P1): unknown group fields must hard-fail, not silently drop.
+  def test_surge_and_loon_reject_unknown_group_fields
+    policy = supported_policy
+    policy['proxy-groups'][0]['unknown-param'] = 'x'
+    %w[surge loon].each do |id|
+      error = assert_raises(MPK::Error) { adapter(id).render(policy) }
+      assert_includes error.message, 'does not support proxy group fields'
+    end
+  end
+
+  # Sol Review #3 (P1): a failing Mihomo core check must prevent ANY promotion,
+  # including an earlier stash artifact, because core validation runs before
+  # promotion in write_all.
+  def test_mihomo_core_failure_prevents_any_promotion
+    Dir.mktmpdir('mpk-output-') do |dir|
+      stash_output = File.join(dir, 'stash.yaml')
+      mihomo_output = File.join(dir, 'mihomo.yaml')
+      File.write(stash_output, 'GOOD_OLD_STASH')
+      config = { 'outputs' => %w[stash mihomo], 'output' => { 'stash' => stash_output, 'mihomo' => mihomo_output } }
+
+      rendered = MPK::OutputPipeline.render_all(supported_policy, config)
+
+      original = BuildHelpers.method(:validate_mihomo_core)
+      BuildHelpers.singleton_class.send(:define_method, :validate_mihomo_core) do |_path|
+        raise MPK::Error, 'mihomo config test failed (simulated)'
+      end
+
+      begin
+        assert_raises(MPK::Error) { MPK::OutputPipeline.write_all(rendered) }
+      ensure
+        BuildHelpers.singleton_class.send(:define_method, :validate_mihomo_core, original)
+      end
+
+      # No promotion happened: old stash untouched, mihomo not created.
+      assert_equal 'GOOD_OLD_STASH', File.read(stash_output)
+      refute File.exist?(mihomo_output)
+    end
+  end
 end

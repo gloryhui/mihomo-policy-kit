@@ -426,20 +426,26 @@ module BuildHelpers
       tmp.flush
       tmp.fsync
 
-      if (mihomo = command_path('mihomo'))
-        puts '[validate] running mihomo -t'
-        stdout, stderr, status = Open3.capture3(mihomo, '-t', '-f', tmp.path)
-        $stdout.write(stdout) unless stdout.empty?
-        $stderr.write(stderr) unless stderr.empty?
-        raise MPK::Error, "mihomo config test failed (#{status.exitstatus})" unless status.success?
-      else
-        puts '[validate] mihomo not found; core validation skipped'
-      end
+      validate_mihomo_core(tmp.path)
 
       # Windows 上 Tempfile 打开句柄会阻止移动，先关闭。
       tmp.close if tmp.respond_to?(:close) && !tmp.closed?
 
       promote_file(tmp.path, output_path)
+    end
+  end
+
+  # Run `mihomo -t` against a candidate file.  Shared by the Mihomo adapter's
+  # pre-promotion core validation and the legacy write_and_test path.
+  def validate_mihomo_core(candidate_path)
+    if (mihomo = command_path('mihomo'))
+      puts '[validate] running mihomo -t'
+      stdout, stderr, status = Open3.capture3(mihomo, '-t', '-f', candidate_path)
+      $stdout.write(stdout) unless stdout.empty?
+      $stderr.write(stderr) unless stderr.empty?
+      raise MPK::Error, "mihomo config test failed (#{status.exitstatus})" unless status.success?
+    else
+      puts '[validate] mihomo not found; core validation skipped'
     end
   end
 

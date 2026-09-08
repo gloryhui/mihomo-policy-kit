@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'fileutils'
+require 'tempfile'
+
 require_relative 'output_adapters/base'
 require_relative 'output_adapters/mihomo'
 require_relative 'output_adapters/stash'
@@ -70,7 +73,40 @@ module MPK
     end
 
     def write_all(rendered)
-      rendered.each { |adapter, content, path| adapter.write(content, path) }
+      # Phase 1: stage every candidate in its target directory (no promotion).
+      staged = rendered.map do |adapter, content, path|
+        candidate = stage_candidate(adapter, content, path)
+        [adapter, candidate, path]
+      end
+
+      begin
+        # Phase 2: run core validation on every staged candidate (e.g.
+        # `mihomo -t`) before any promotion, so a failing core check cannot
+        # leave a partial update across the selected outputs.
+        staged.each { |adapter, candidate, _path| adapter.validate_core(candidate) }
+
+        # Phase 3: promote all candidates only after every core check passed.
+        staged.each { |_adapter, candidate, path| BuildHelpers.promote_file(candidate, path) }
+      ensure
+        # Remove any candidate that was not promoted (promote_file moves it away).
+        staged.each do |_adapter, candidate, _path|
+          File.delete(candidate) if File.file?(candidate)
+        end
+      end
+    end
+
+    # Write a rendered artifact to a same-directory candidate file without
+    # promoting it, so core validation can run before any existing output is
+    # replaced.
+    def stage_candidate(adapter, content, path)
+      FileUtils.mkdir_p(File.dirname(path))
+      tmp = Tempfile.create(['mpk-candidate-', adapter.extension], File.dirname(path))
+      tmp.binmode
+      tmp.write(content)
+      tmp.flush
+      tmp.fsync
+      tmp.close if tmp.respond_to?(:close) && !tmp.closed?
+      tmp.path
     end
   end
 end

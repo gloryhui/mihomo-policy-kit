@@ -67,6 +67,11 @@ module MPK
           sni = proxy['servername'] || proxy['sni']
           parts << "sni=#{sni}" unless sni.to_s.empty?
           parts << "skip-cert-verify=#{proxy['skip-cert-verify'] ? 'true' : 'false'}" if proxy.key?('skip-cert-verify')
+          # alterId==0 (Mihomo default) means AEAD; alterId>0 means legacy.
+          # Surge's vmess-aead flag maps directly, so emit it explicitly rather
+          # than silently dropping the AEAD decision.
+          alter_id = proxy.fetch('alterId', 0).to_i
+          parts << (alter_id.zero? ? 'vmess-aead=true' : 'vmess-aead=false')
           parts.join(', ')
         when 'trojan'
           reject_unmapped_fields!(proxy, %w[name type server port password network tls sni servername ws-opts udp skip-cert-verify])
@@ -100,8 +105,27 @@ module MPK
       end
 
       def render_group(group)
+        type = group['type'].to_s
         members = Array(group['proxies']).map { |item| conf_value(item) }
-        "#{group['name']} = #{group['type']}, #{members.join(', ')}"
+        line = "#{group['name']} = #{type}, #{members.join(', ')}"
+        params = group_params(group, type)
+        params.empty? ? line : "#{line}, #{params.join(', ')}"
+      end
+
+      def group_params(group, type)
+        case type
+        when 'select'
+          reject_unmapped_group_fields!(group, %w[name type proxies])
+          []
+        when 'url-test'
+          reject_unmapped_group_fields!(group, %w[name type proxies url interval tolerance lazy])
+          group_param_parts(group, %w[url interval tolerance lazy])
+        when 'fallback'
+          reject_unmapped_group_fields!(group, %w[name type proxies url interval lazy])
+          group_param_parts(group, %w[url interval lazy])
+        else
+          []
+        end
       end
 
       def render_rule(rule)

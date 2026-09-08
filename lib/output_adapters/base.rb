@@ -33,6 +33,13 @@ module MPK
         # selected results before it begins promotion.
       end
 
+      # Core-level validation on a staged candidate file (e.g. `mihomo -t`).
+      # Runs during OutputPipeline.write_all *before* any candidate is promoted,
+      # so a failing core check cannot leave a partial update.  Default no-op.
+      def validate_core(_candidate_path)
+        # no-op for adapters without an external core to test
+      end
+
       private
 
       def mapping!(policy)
@@ -157,6 +164,26 @@ module MPK
         return if unsupported.empty?
 
         raise Error, "#{id} adapter does not support proxy fields: #{unsupported.sort.join(', ')}"
+      end
+
+      # A proxy-group field that is not converted is a silent downgrade.  Keep
+      # group scopes explicit per type and make unknown fields a capability
+      # error rather than emitting a plausible-but-broken group.
+      def reject_unmapped_group_fields!(group, allowed)
+        unsupported = group.keys.map(&:to_s).reject { |key| allowed.include?(key) }
+        return if unsupported.empty?
+
+        raise Error, "#{id} adapter does not support proxy group fields: #{unsupported.sort.join(', ')}"
+      end
+
+      # Render the supported key=value group parameters that are actually
+      # present, in a stable order.  Only keys the caller whitelists are read.
+      def group_param_parts(group, keys)
+        keys.filter_map do |key|
+          next unless group.key?(key)
+
+          "#{key}=#{conf_value(group[key])}"
+        end
       end
     end
   end

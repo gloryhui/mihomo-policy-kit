@@ -95,8 +95,27 @@ module MPK
       end
 
       def render_group(group)
+        type = group['type'].to_s
         members = Array(group['proxies']).map { |item| conf_value(item) }
-        "#{group['name']} = #{group['type']},#{members.join(',')}"
+        line = "#{group['name']} = #{type},#{members.join(',')}"
+        params = group_params(group, type)
+        params.empty? ? line : "#{line},#{params.join(',')}"
+      end
+
+      def group_params(group, type)
+        case type
+        when 'select'
+          reject_unmapped_group_fields!(group, %w[name type proxies])
+          []
+        when 'url-test'
+          reject_unmapped_group_fields!(group, %w[name type proxies url interval tolerance lazy])
+          group_param_parts(group, %w[url interval tolerance lazy])
+        when 'fallback'
+          reject_unmapped_group_fields!(group, %w[name type proxies url interval lazy])
+          group_param_parts(group, %w[url interval lazy])
+        else
+          []
+        end
       end
 
       def render_rule(rule)

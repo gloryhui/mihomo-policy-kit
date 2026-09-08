@@ -23,6 +23,12 @@ module MPK
         document = YAML.safe_load(content, permitted_classes: [Symbol], aliases: true)
         BuildHelpers.write_and_test(document, output_path)
       end
+
+      # Pre-promotion core check: run `mihomo -t` against the staged candidate
+      # so a failing core test is caught before any artifact is promoted.
+      def validate_core(candidate_path)
+        BuildHelpers.validate_mihomo_core(candidate_path)
+      end
     end
   end
 end
