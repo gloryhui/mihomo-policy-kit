@@ -15,11 +15,13 @@ Source -> Provider -> Overlay -> Output
 - **Overlay**：用户自定义规则、DNS 与公共补丁
 - **Output**：Mihomo / Stash / Surge / Loon / sing-box 等客户端产物
 
-v0.1 只实现：
+v0.3 当前实现：
 
 ```text
 Mihomo Source
-  -> Smart-Config-Kit Normal
+  -> Provider Manifest / Generic Runner
+       -> Smart-Config-Kit Normal
+       -> ACL4SSR
   -> Custom Overlay
   -> Mihomo YAML
 ```
@@ -43,12 +45,17 @@ Smart-Config-Kit 自身已经有清晰的规则源、业务组、区域组和多
 3. 直接对临时机场 YAML 执行上游转换
 4. 转换完成后再执行本项目 Overlay
 
-## 3. Provider 接口
+## 3. Provider 接口与 Manifest
+
+每个 Provider 目录包含最小 `manifest.yaml` 契约：`id`、`input_format`、`output_format`、`runner.kind/entrypoint` 与 `group_map`，可选 `options` 命名空间。当前格式固定为 `mihomo-yaml -> mihomo-yaml`，runner 支持 Bash 与 Ruby。Manifest 缺字段、目录 id 不一致、entrypoint 或 group map 不存在时构建会明确失败。
+
+`scripts/build.rb` 只负责发现 manifest、执行通用 runner、加载逻辑 group map，然后统一执行 Overlay 与校验。
 
 当前 Provider：
 
 ```text
-providers/smart-config-kit/provider.sh
+providers/smart-config-kit/manifest.yaml + provider.sh
+providers/acl4ssr/manifest.yaml + provider.rb
 ```
 
 输入：
@@ -75,7 +82,9 @@ providers/smart-config-kit/provider.sh
 
 输出仍然写回输入 YAML。
 
-**限制**：v0.1 只允许 `oc-normal`（Normal / 非 Smart）版本；`mihomo-smart` 与
+ACL4SSR runner 同样写回输入 YAML，保留 `proxies` / `proxy-providers`，创建区域与业务策略组，并引用 ACL4SSR 官方 YAML `payload:` rule-provider URL；规则正文不复制到本仓库。当前明确支持局域网、广告、国内域名/IP、AI、Google、Microsoft、Telegram、Netflix、YouTube 与 ProxyGFWlist。规则顺序是局域网/广告/国内直连、AI 专组、海外代理、最后才是 Final；静态节点在 Ruby 端按地区过滤，`proxy-providers` 则以 Mihomo 的 `use` + `filter` 引用运行时节点。
+
+**限制**：Smart-Config-Kit 仍只允许 `oc-normal`（Normal / 非 Smart）版本；`mihomo-smart` 与
 LightGBM 版本会在 `VERSION_TAG` 校验阶段被拒绝。
 
 未来 Provider 只要满足相同契约，就可以接入主构建流程。

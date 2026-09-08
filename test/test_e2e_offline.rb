@@ -53,6 +53,26 @@ class OfflineE2ETest < Minitest::Test
     }
   end
 
+  def build_acl_config(dir, output:)
+    cfg = build_config(dir, dns_profile: 'upstream', output: output)
+    cfg['provider'] = 'acl4ssr'
+    cfg['provider_options'] = { 'acl4ssr' => {} }
+    cfg['groups'] = { 'map_file' => File.join(dir, 'groups-acl.yaml') }
+    write_lf(cfg['groups']['map_file'], <<~YAML)
+      ai: ACL4SSR AI
+      global: ACL4SSR Global
+      us: ACL4SSR United States
+      hk: ACL4SSR Hong Kong
+      jp: ACL4SSR Japan
+      sg: ACL4SSR Singapore
+      direct: DIRECT
+      reject: REJECT
+      final: ACL4SSR Final
+    YAML
+    cfg['validation']['require_targets'] = %w[global direct]
+    cfg
+  end
+
   def setup_workdir
     Dir.mktmpdir('mpk-e2e-') do |dir|
       write_lf(File.join(dir, 'custom.list'), "DOMAIN-SUFFIX,experientiallabs.ai,global\n")
@@ -198,6 +218,28 @@ class OfflineE2ETest < Minitest::Test
       refute bad_status.success?, 'bad build should fail'
       assert File.file?(output), 'existing output should survive'
       assert_equal first_content, File.binread(output), 'existing output should be unchanged'
+    end
+  end
+
+  def test_acl4ssr_provider_offline_e2e
+    setup_workdir do |dir|
+      output = File.join(dir, 'dist', 'acl4ssr.yaml')
+      config_path = File.join(dir, 'acl.yaml')
+      write_lf(config_path, YAML.dump(build_acl_config(dir, output: output)))
+      stdout, stderr, status = run_build(config_path)
+      assert status.success?, "ACL4SSR build failed: #{stdout} #{stderr}"
+      doc = MPK::YAMLUtil.load_file(output)
+      assert_operator Array(doc['proxies']).length, :>, 0
+      assert_includes doc['proxy-groups'].map { |g| g['name'] }, 'ACL4SSR Global'
+      assert doc.dig('rule-providers', 'acl4ssr-lan')
+      %w[acl4ssr-ads acl4ssr-china-domain acl4ssr-china-ip acl4ssr-ai acl4ssr-google acl4ssr-microsoft acl4ssr-telegram acl4ssr-netflix acl4ssr-proxy].each do |provider|
+        assert doc.dig('rule-providers', provider), "missing #{provider}"
+      end
+      assert_equal 'DOMAIN-SUFFIX,experientiallabs.ai,ACL4SSR Global', doc['rules'].first
+      assert_equal 'DIRECT', doc['rules'][1].split(',').last
+      assert_includes doc['rules'], 'RULE-SET,acl4ssr-ai,ACL4SSR AI'
+      assert_includes doc['rules'], 'RULE-SET,acl4ssr-china-domain,DIRECT'
+      assert_equal 'MATCH,ACL4SSR Final', doc['rules'].last
     end
   end
 end

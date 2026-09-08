@@ -1,0 +1,11 @@
+id: smart-config-kit
+input_format: mihomo-yaml
+output_format: mihomo-yaml
+runner:
+  kind: bash
+  entrypoint: provider.sh
+group_map: groups.yaml
+options:
+  provider_local: ./vendor/OpenClash(mihomo).sh
+  provider_remote: https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/OpenClash/OpenClash%28mihomo%29.sh
+  forbid_smart: true

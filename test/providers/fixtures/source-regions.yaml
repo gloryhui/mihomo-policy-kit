@@ -1,0 +1,31 @@
+proxies:
+  - name: Hong Kong-HK
+    type: ss
+    server: 127.0.0.1
+    port: 443
+    cipher: aes-128-gcm
+    password: fake-password-hk
+  - name: Tokyo-JP
+    type: ss
+    server: 127.0.0.2
+    port: 443
+    cipher: aes-128-gcm
+    password: fake-password-jp
+  - name: Singapore-SG
+    type: ss
+    server: 127.0.0.3
+    port: 443
+    cipher: aes-128-gcm
+    password: fake-password-sg
+  - name: United States-US
+    type: ss
+    server: 127.0.0.4
+    port: 443
+    cipher: aes-128-gcm
+    password: fake-password-us
+  - name: Germany-Other
+    type: ss
+    server: 127.0.0.5
+    port: 443
+    cipher: aes-128-gcm
+    password: fake-password-other
