@@ -17,6 +17,21 @@ afterEach(() => {
 });
 
 describe("desktop connections", () => {
+  it("discards a native response delivered after disconnect", async () => {
+    vi.stubEnv("VITE_MPK_DESKTOP", "1");
+    let complete!: (value: unknown) => void;
+    vi.mocked(invoke).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const pending = api("sources");
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await disconnectServer();
+    complete([{ id: 99 }]);
+    await expect(pending).rejects.toThrow("连接已改变");
+  });
   it("routes desktop requests through the native authenticated channel", async () => {
     vi.stubEnv("VITE_MPK_DESKTOP", "1");
     vi.mocked(invoke).mockResolvedValue({ id: 7 });

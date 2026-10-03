@@ -5,6 +5,8 @@ export const connected = ref(false);
 export const serverLabel = ref("");
 export const isDesktop = () => import.meta.env.VITE_MPK_DESKTOP === "1";
 const preferenceKey = "mpk.desktop.server.v1";
+let epoch = 0;
+export const connectionEpoch = () => epoch;
 
 export function loadServer(): { endpoint: string; username: string } {
   try {
@@ -24,6 +26,7 @@ export async function connectServer(
   password: string,
   certificatePem: string,
 ) {
+  epoch += 1;
   const origin = await invoke<string>("connect_server", {
     endpoint,
     username,
@@ -43,6 +46,7 @@ export async function connectServer(
 }
 
 export async function disconnectServer() {
+  epoch += 1;
   await invoke("disconnect_server");
   connected.value = false;
   serverLabel.value = "";
