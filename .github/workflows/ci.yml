@@ -21,6 +21,34 @@ jobs:
         with:
           ruby-version: '3.3'
 
+      - name: Install Web Ruby dependencies
+        run: bundle install
+
+      - name: Web control plane tests
+        run: |
+          bundle exec ruby test/test_control_plane.rb
+          bundle exec ruby test/test_web_api.rb
+          bundle exec ruby test/test_web_publisher.rb
+          bundle exec ruby test/test_web_deploy.rb
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Web UI checks
+        run: |
+          npm --prefix web ci
+          npm --prefix web run lint
+          npm --prefix web run typecheck
+          npm --prefix web run test
+          npm --prefix web run build
+
+      - name: New Ruby syntax
+        run: find lib/services lib/web lib/db -name '*.rb' -print0 | xargs -0 -n1 ruby -c
+
       - name: Ruby syntax
         run: |
           ruby -c lib/overlay.rb
@@ -168,6 +196,18 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
+
+      - name: Web control plane on native Windows
+        shell: pwsh
+        run: |
+          bundle install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bundle exec ruby test/test_control_plane.rb
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bundle exec ruby test/test_web_api.rb
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bundle exec ruby test/test_web_deploy.rb
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Validate PowerShell on native Windows
         shell: pwsh
