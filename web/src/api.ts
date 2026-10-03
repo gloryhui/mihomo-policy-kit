@@ -1,8 +1,22 @@
+import { invoke } from "@tauri-apps/api/core";
+import { isDesktop } from "./desktop";
+
 export async function api<T>(
   path: string,
   method = "GET",
   body?: unknown,
 ): Promise<T> {
+  if (isDesktop()) {
+    try {
+      return await invoke<T>("api_request", {
+        path,
+        method,
+        body: body ?? null,
+      });
+    } catch (error) {
+      throw new Error(typeof error === "string" ? error : "管理请求失败");
+    }
+  }
   const response = await fetch(`/api/v1/${path}`, {
     method,
     headers: {
