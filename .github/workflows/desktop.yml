@@ -1,0 +1,48 @@
+name: Desktop
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    name: desktop-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: desktop:build:windows
+          - os: macos-latest
+            script: desktop:build:macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - run: npm --prefix web ci
+      - run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
+      - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --no-default-features --locked
+      - run: cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --no-default-features --locked -- -D warnings
+      - run: npm --prefix web run lint
+      - run: npm --prefix web run typecheck
+      - run: npm --prefix web run test
+      - run: npm --prefix web run ${{ matrix.script }}
+        env:
+          CI: 'true'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mpk-desktop-${{ matrix.os }}
+          path: desktop/src-tauri/target/release/bundle/**
+          if-no-files-found: error

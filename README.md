@@ -4,7 +4,8 @@
 
 它不试图重新发明一套分流规则，而是把优秀的上游分流项目当作 Provider，再叠加你自己的规则、校验与发布流程，最终生成一份可直接被 Clash Party、Clash Verge Rev、Nikki、Clash Meta / ClashMi 等 Mihomo 客户端订阅的 `mihomo.yaml`。
 
-> 当前阶段：**v0.5 Web 控制台 MVP**。浏览器可管理多个订阅源、筛选节点、构建 Profile 与发布；现有 CLI 可独立使用。
+> 当前阶段：**v0.6 桌面管理客户端**。Tauri 客户端连接现有 Web 服务，管理多个订阅源、筛选节点、构建 Profile 与发布；浏览器控制台和 CLI 可独立使用。
+> [桌面客户端安装、连接与打包](docs/desktop-client.md)。
 > [控制台使用与部署](docs/web-console.md)：本机开发试用，Linux + Nginx 正式发布。
 > v0.1 已完成 Smart-Config-Kit **Normal / 非 Smart** 构建链路与真实客户端验收；
 > v0.2 增加私有 HTTPS 订阅发布器，v0.3 增加第二 Provider，v0.4 增加严格的多客户端 Output Adapter。

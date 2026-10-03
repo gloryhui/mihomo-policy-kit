@@ -1,6 +1,11 @@
 import { createApp } from "vue";
 import { createPinia } from "pinia";
-import { createRouter, createWebHistory } from "vue-router";
+import {
+  createRouter,
+  createWebHistory,
+  createWebHashHistory,
+} from "vue-router";
+import { isDesktop } from "./desktop";
 import ElementPlus from "element-plus";
 import "element-plus/dist/index.css";
 import "./style.css";
@@ -12,7 +17,7 @@ import Profiles from "./pages/Profiles.vue";
 import Publish from "./pages/Publish.vue";
 
 const router = createRouter({
-  history: createWebHistory("/admin/"),
+  history: isDesktop() ? createWebHashHistory() : createWebHistory("/admin/"),
   routes: [
     {
       path: "/",

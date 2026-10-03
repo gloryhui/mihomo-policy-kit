@@ -8,6 +8,12 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.md  text eol=lf
+*.ts  text eol=lf
+*.vue text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.rs  text eol=lf
+*.toml text eol=lf
 *.list text eol=lf
 *.ps1 text eol=crlf
 *.cmd text eol=crlf

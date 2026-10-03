@@ -36,3 +36,13 @@ vendor/*
 *.db
 *.db-wal
 *.db-shm
+
+# Desktop build output
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+/desktop/src-tauri/icons/*
+!/desktop/src-tauri/icons/icon.ico
+!/desktop/src-tauri/icons/icon.icns
+!/desktop/src-tauri/icons/32x32.png
+!/desktop/src-tauri/icons/128x128.png
+!/desktop/src-tauri/icons/128x128@2x.png

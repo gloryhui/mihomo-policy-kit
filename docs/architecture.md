@@ -49,6 +49,12 @@ SourceManager 与 ControlPlane 服务负责控制面，Sequel migration 管理 S
 每次 Profile Build 创建独立私有 artifact，失败保留旧成功文件；Publisher 仍唯一管理正式版本和原子切换。
 五个页面以及数据/部署边界见 [web-console.md](web-console.md)。
 
+## 1.2 V0.6 桌面管理客户端
+
+桌面应用打包复用 Vue 页面，通过 Tauri IPC 调用 Rust 的受限 HTTP 通道，再连接现有 Nginx 认证入口和 Ruby API。浏览器继续使用同源 fetch；业务 Service / Provider / Publisher 不变。
+
+Rust 管理连接状态和仅驻内存的认证凭据，强制远程 HTTPS、关闭重定向、验证用户导入的 CA/自签名证书，并限制路径、方法、数据大小和超时。连接切换后丢弃旧响应。本地 WebView 不加载远端管理 HTML，也不开放远端原生权限。详见 [desktop-client.md](desktop-client.md)。
+
 ## 2. 为什么不 Fork Smart-Config-Kit
 
 Smart-Config-Kit 自身已经有清晰的规则源、业务组、区域组和多端生成体系。我们的需求是在它之外增加：
