@@ -14,6 +14,16 @@ module BuildHelpers
 
   module_function
 
+  # Web operations suppress raw subprocess output in this thread only. Never
+  # redirect process-global stdout in a multi-threaded API server.
+  def with_private_logs
+    previous = Thread.current[:mpk_private_logs]
+    Thread.current[:mpk_private_logs] = true
+    yield
+  ensure
+    Thread.current[:mpk_private_logs] = previous
+  end
+
   def absolute(path)
     File.expand_path(path.to_s, ROOT_DIR)
   end
@@ -39,11 +49,11 @@ module BuildHelpers
   # exec_label: 命令失败时异常消息中使用的标签；省略时退化为 log 显示值。
   def run_streaming(env, *command, log: nil, exec_label: nil)
     display = log || command.join(' ')
-    puts "[exec] #{display}"
+    puts "[exec] #{display}" unless Thread.current[:mpk_private_logs]
     status = nil
 
     Open3.popen2e(env, *command) do |_stdin, output, wait_thread|
-      output.each { |line| $stdout.write(line) }
+      output.each { |line| $stdout.write(line) unless Thread.current[:mpk_private_logs] }
       status = wait_thread.value
     end
 
@@ -439,13 +449,13 @@ module BuildHelpers
   # pre-promotion core validation and the legacy write_and_test path.
   def validate_mihomo_core(candidate_path)
     if (mihomo = command_path('mihomo'))
-      puts '[validate] running mihomo -t'
+      puts '[validate] running mihomo -t' unless Thread.current[:mpk_private_logs]
       stdout, stderr, status = Open3.capture3(mihomo, '-t', '-f', candidate_path)
-      $stdout.write(stdout) unless stdout.empty?
-      $stderr.write(stderr) unless stderr.empty?
+      $stdout.write(stdout) unless stdout.empty? || Thread.current[:mpk_private_logs]
+      $stderr.write(stderr) unless stderr.empty? || Thread.current[:mpk_private_logs]
       raise MPK::Error, "mihomo config test failed (#{status.exitstatus})" unless status.success?
     else
-      puts '[validate] mihomo not found; core validation skipped'
+      puts '[validate] mihomo not found; core validation skipped' unless Thread.current[:mpk_private_logs]
     end
   end
 

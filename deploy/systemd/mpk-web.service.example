@@ -1,0 +1,24 @@
+[Unit]
+Description=Mihomo Policy Kit control plane API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mpk
+Group=mpk
+WorkingDirectory=/opt/mihomo-policy-kit
+# Secret values live in a root-owned 0600 file outside the repository.
+EnvironmentFile=/etc/mihomo-policy-kit/web.env
+ExecStart=/usr/bin/ruby /opt/mihomo-policy-kit/scripts/web.rb
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mihomo-policy-kit
+
+[Install]
+WantedBy=multi-user.target

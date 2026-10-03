@@ -149,7 +149,16 @@ https://<host>/sub/<token>/mihomo.yaml
   属于敏感数据：备份文件本身必须加密 / 限权；若丢失 token-state 需重新 create token
   并更新客户端。
 
-## 尚未实现
+## 当前限制
 
-- V0.3：Provider 兼容层（第二套分流方案）
-- V0.4：多客户端输出（Stash / Loon / Surge / sing-box）
+Provider 兼容层和多客户端 Output Adapter 已在 V0.3/V0.4 完成，Publisher 仍只发布 Mihomo YAML。
+
+## V0.5 Web 控制台接入
+
+控制台直接调用现有 Publisher 服务，正式发布状态仍由文件系统的 `active` / immutable state-set 管理。
+SQLite 只记录构建统计，Web 的成功 Build 可以 publish，已有 current/previous 支持 rollback；Token create/list/revoke
+保持“一次显示完整地址”的语义。Web 页面多个 Profile 共用一个 current，发布会更新全部设备订阅。
+
+新部署示例：[`deploy/nginx/mpk-web-console.conf.example`](../deploy/nginx/mpk-web-console.conf.example)，
+`/admin/` 与 `/api/` 使用外部 Basic Auth；`/sub/` 无 Basic Auth，关闭 token URI 日志。Nginx 只公开 Publisher public/。
+完整使用步骤见 [web-console.md](web-console.md)。正式 Publisher 继续以 Linux 为目标；不自动部署域名、证书或 Nginx。

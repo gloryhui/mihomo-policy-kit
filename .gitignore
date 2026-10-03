@@ -28,3 +28,11 @@ vendor/*
 /runtime/*
 !/runtime/.gitkeep
 
+
+# Web control plane and generated assets
+/web/node_modules/
+/web/dist/
+/.bundle/
+*.db
+*.db-wal
+*.db-shm

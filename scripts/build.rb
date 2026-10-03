@@ -11,6 +11,7 @@ require 'build_helpers'
 require 'provider_manifest'
 require 'provider_runner'
 require 'output_adapter'
+require 'services/build_pipeline'
 
 begin
   config_path = ARGV[0] || File.join(ROOT_DIR, 'config', 'config.yaml')
@@ -28,57 +29,7 @@ begin
     config['output']['mihomo'] = output_override
   end
 
-  provider_name = config['provider'].to_s.strip
-  manifest = MPK::ManifestLoader.new(root_dir: ROOT_DIR).load(provider_name,
-    configured_path: BuildHelpers.dig(config, 'provider_manifest'))
-  configured_group_map = BuildHelpers.dig(config, 'groups', 'map_file').to_s
-  group_map_path = configured_group_map.empty? ? manifest.group_map : BuildHelpers.absolute(configured_group_map)
-  group_map = MPK::YAMLUtil.load_file(group_map_path)
-  overlay = MPK::Overlay.new(config: config, group_map: group_map)
-
-  Dir.mktmpdir('mihomo-policy-kit-') do |work_dir|
-    working_yaml = File.join(work_dir, 'source.yaml')
-    source_file = BuildHelpers.dig(config, 'source', 'file')
-    if source_file && !source_file.to_s.strip.empty?
-      source_path = BuildHelpers.absolute(source_file)
-      raise MPK::Error, "source file not found: #{source_path}" unless File.file?(source_path)
-      puts "[source] use local file: #{source_path}"
-      FileUtils.cp(source_path, working_yaml)
-    else
-      env_name = BuildHelpers.dig(config, 'source', 'url_env', default: 'MPK_SOURCE_URL').to_s
-      source_url = ENV[env_name].to_s.strip
-      raise MPK::Error, "environment variable #{env_name} is empty" if source_url.empty?
-      puts "[source] download subscription from #{env_name}"
-      BuildHelpers.fetch_to(source_url, working_yaml, log: "$#{env_name}")
-    end
-
-    source_format, uri_count = BuildHelpers.normalize_subscription_file(working_yaml)
-    puts "[source] format=#{source_format}"
-    source_document = MPK::YAMLUtil.load_file(working_yaml)
-    source_proxy_count = Array(source_document['proxies']).length
-    source_provider_count = source_document['proxy-providers'].is_a?(Hash) ? source_document['proxy-providers'].length : 0
-    source_proxy_count = uri_count if source_format == :uri_list && source_proxy_count.zero?
-    puts "[source] proxies=#{source_proxy_count} proxy-providers=#{source_provider_count}"
-    raise MPK::Error, 'source subscription contains neither proxies nor proxy-providers' if source_proxy_count.zero? && source_provider_count.zero?
-
-    MPK::ProviderRunner.new(root_dir: ROOT_DIR).run(manifest, input_path: working_yaml, config: config)
-    transformed = MPK::YAMLUtil.load_file(working_yaml)
-    after_provider_proxy_count = Array(transformed['proxies']).length
-    puts "[provider] proxies after transform=#{after_provider_proxy_count}"
-    if source_proxy_count.positive? && after_provider_proxy_count.zero?
-      raise MPK::Error, "provider removed all proxies: source=#{source_proxy_count}, transformed=0"
-    end
-
-    overlay.apply!(transformed, root_dir: ROOT_DIR)
-    stats = overlay.validate!(transformed, source_proxy_count: source_proxy_count)
-    # V0.4 Output Pipeline: all requested adapters render and validate before
-    # any output is promoted.  No client-specific branch belongs in build.rb.
-    rendered_outputs = MPK::OutputPipeline.render_all(transformed, config)
-    MPK::OutputPipeline.write_all(rendered_outputs)
-    puts '[build] success'
-    rendered_outputs.each { |adapter, _content, path| puts "[build] output #{adapter.id}=#{path}" }
-    puts "[build] proxies=#{stats[:proxies]} proxy-providers=#{stats[:proxy_providers]} proxy-groups=#{stats[:proxy_groups]} rules=#{stats[:rules]}"
-  end
+  MPK::Services::BuildPipeline.new.build(config)
 rescue MPK::Error => e
   warn "[ERROR] #{e.message}"
   exit 1

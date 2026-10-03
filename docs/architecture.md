@@ -27,6 +27,28 @@ Mihomo Source
        -> Mihomo YAML / Stash YAML / Loon conf / Surge conf / sing-box JSON
 ```
 
+## 1.1 V0.5 控制面
+
+```text
+CLI source: --------------------------┐
+                                    ↓
+Web/API -> Source Manager -> SQLite encrypted inventory
+                ↓                   ↓
+           Profile selection / cost filter / namespace / merge
+                                    ↓
+                       Shared Services::BuildPipeline
+                                    ↓
+                       Provider -> Overlay -> Output
+                                    ↓
+                              Existing Publisher
+```
+
+CLI 和 Web 共用 BuildPipeline，CLI 原有 source: 行为保持独立。Web 层负责路由、输入校验、认证边界和白名单 DTO；
+SourceManager 与 ControlPlane 服务负责控制面，Sequel migration 管理 SQLite（foreign_keys/WAL/busy_timeout）。
+源内容和节点原始 proxy 用 AES-256-GCM 加密，master key 来自外部环境；库中不保存 Publisher current/previous 或完整 Token。
+每次 Profile Build 创建独立私有 artifact，失败保留旧成功文件；Publisher 仍唯一管理正式版本和原子切换。
+五个页面以及数据/部署边界见 [web-console.md](web-console.md)。
+
 ## 2. 为什么不 Fork Smart-Config-Kit
 
 Smart-Config-Kit 自身已经有清晰的规则源、业务组、区域组和多端生成体系。我们的需求是在它之外增加：
