@@ -1,6 +1,7 @@
 GEM
   remote: https://rubygems.org/
   specs:
+    base64 (0.3.0)
     bigdecimal (4.1.3)
     minitest (5.27.0)
     nio4r (2.7.5)
@@ -15,15 +16,18 @@ GEM
       rack
     sequel (5.109.0)
       bigdecimal
+    sqlite3 (2.9.6-arm64-darwin)
     sqlite3 (2.9.6-x64-mingw-ucrt)
     sqlite3 (2.9.6-x86_64-linux-gnu)
 
 PLATFORMS
+  arm64-darwin-24
   x64-mingw-ucrt
   x86_64-linux
   x86_64-linux-gnu
 
 DEPENDENCIES
+  base64 (~> 0.3)
   minitest (~> 5.0)
   puma (~> 7.0)
   rack-test (~> 2.0)

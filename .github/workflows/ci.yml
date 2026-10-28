@@ -92,6 +92,7 @@ jobs:
 
       - name: Shell syntax
         run: |
+          bash -n scripts/generate-personal-config.sh
           bash -n bin/mpk
           bash -n providers/smart-config-kit/provider.sh
           bash -n scripts/codex-next.sh
@@ -114,6 +115,10 @@ jobs:
 
       - name: Ruby unit tests
         run: |
+          ruby -c lib/personal_policy.rb
+          ruby -c scripts/generate-personal-config.rb
+          ruby test/test_personal_policy.rb
+          bundle exec ruby test/test_three_source_integration.rb
           ruby test/test_overlay.rb
           ruby test/test_build_helpers.rb
           ruby test/test_provider_manifest.rb

@@ -4,6 +4,13 @@ config/config.yaml
 .env.*
 !.env.example
 
+# Personal three-source inputs and generated configuration (examples stay public)
+订阅地址.txt
+personal-sources.json
+sources.local.*
+mihomo-personal*.yaml
+mihomo-v06.yaml
+
 # User rules
 rules/custom.list
 rules/private-*.list

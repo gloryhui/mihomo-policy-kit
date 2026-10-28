@@ -1,0 +1,8 @@
+{
+  "mihomo": "/absolute/path/to/mihomo",
+  "sources": {
+    "ssone": {"url": "https://ssone.example.invalid/subscription"},
+    "tnt": {"url": "https://tnt.example.invalid/subscription"},
+    "zodaccyes": {"url": "https://zodaccyes.example.invalid/subscription"}
+  }
+}

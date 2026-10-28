@@ -10,6 +10,8 @@
 > v0.1 已完成 Smart-Config-Kit **Normal / 非 Smart** 构建链路与真实客户端验收；
 > v0.2 增加私有 HTTPS 订阅发布器，v0.3 增加第二 Provider，v0.4 增加严格的多客户端 Output Adapter。
 
+个人可选扩展（不改变默认产品流程）：`bash scripts/generate-personal-config.sh`。直接拉取 ssone、tnt 和 zodaccyes，生成可手动导入的完整 Mihomo 配置，见[本地配置生成说明](docs/personal-config.md)。
+
 ## 为什么做这个项目
 
 现实里的客户端往往很杂：

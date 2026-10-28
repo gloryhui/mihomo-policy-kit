@@ -4,6 +4,7 @@ require_relative '../build_helpers'
 require_relative '../provider_manifest'
 require_relative '../provider_runner'
 require_relative '../output_adapter'
+require_relative '../personal_policy'
 
 module MPK
   module Services
@@ -14,12 +15,22 @@ module MPK
         @root_dir, @log = root_dir, log || proc { |line| puts line }
       end
 
-      def build(config, document: nil)
+      def build(config, document: nil, policy_documents: nil)
+        preset = config.fetch('policy_preset', 'default')
+        raise MPK::Error, 'unknown policy preset' unless %w[default three-source-ai].include?(preset)
+        ai = nil
+        if preset == 'three-source-ai'
+          raise MPK::Error, 'three-source policy requires Smart-Config-Kit Normal and Mihomo output' unless config['provider'] == 'smart-config-kit' && Array(config.fetch('outputs', ['mihomo'])) == ['mihomo']
+          document, ai = PersonalPolicy.prepare(policy_documents)
+          core = PersonalPolicy.find_core(config.fetch('policy_runtime', {}))
+        end
         manifest = MPK::ManifestLoader.new(root_dir: @root_dir).load(config['provider'].to_s.strip,
           configured_path: BuildHelpers.dig(config, 'provider_manifest'))
         override = BuildHelpers.dig(config, 'groups', 'map_file').to_s
         map_path = override.empty? ? manifest.group_map : BuildHelpers.absolute(override)
-        overlay = MPK::Overlay.new(config: config, group_map: MPK::YAMLUtil.load_file(map_path))
+        group_map = MPK::YAMLUtil.load_file(map_path)
+        group_map['ai'] = PersonalPolicy::GROUPS.fetch('category-ai-!cn') if ai
+        overlay = MPK::Overlay.new(config: config, group_map: group_map)
         Dir.mktmpdir('mihomo-policy-kit-') do |work_dir|
           input = File.join(work_dir, 'source.yaml')
           if document
@@ -52,8 +63,20 @@ module MPK
           after_count = Array(transformed['proxies']).length
           @log.call("[provider] proxies after transform=#{after_count}")
           raise MPK::Error, "provider removed all proxies: source=#{source_count}, transformed=0" if source_count.positive? && after_count.zero?
+          raise MPK::Error, 'personal policy provider changed the ordinary node count' if ai && after_count != source_count
+          PersonalPolicy.apply!(transformed, ai) if ai
           overlay.apply!(transformed, root_dir: @root_dir)
+          PersonalPolicy.validate!(transformed) if ai
           stats = overlay.validate!(transformed, source_proxy_count: source_count)
+          if ai
+            PersonalPolicy.write_private(input, YAML.dump(transformed))
+            cache = config.dig('policy_runtime', 'geodata_dir')
+            %w[geoip.dat geosite.dat country.mmdb ASN.mmdb].each do |file|
+              cached = File.join(cache.to_s, file)
+              FileUtils.cp(cached, File.join(work_dir, file)) if cache && File.file?(cached)
+            end
+            PersonalPolicy.run!(core, '-t', '-d', work_dir, '-f', input, seconds: 180, label: 'mihomo configuration validation')
+          end
           outputs = MPK::OutputPipeline.render_all(transformed, config)
           MPK::OutputPipeline.write_all(outputs)
           @log.call('[build] success')
