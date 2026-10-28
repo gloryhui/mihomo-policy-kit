@@ -55,6 +55,14 @@ SourceManager 与 ControlPlane 服务负责控制面，Sequel migration 管理 S
 
 Rust 管理连接状态和仅驻内存的认证凭据，强制远程 HTTPS、关闭重定向、验证用户导入的 CA/自签名证书，并限制路径、方法、数据大小和超时。连接切换后丢弃旧响应。本地 WebView 不加载远端管理 HTML，也不开放远端原生权限。详见 [desktop-client.md](desktop-client.md)。
 
+## 1.3 个人三合一脚本扩展
+
+个人入口 `scripts/generate-personal-config.sh` 从仓库外读取三个订阅地址，独立下载并完成 zodaccyes 的二次拉取，再调用共享 `Services::BuildPipeline`。它不增加 Web/桌面页面、API、库存字段或数据库迁移，也不改变默认构建策略。
+
+显式启用个人策略时，普通节点进入外部 Normal Provider，之后加入隔离的 AI 节点和五个 AI 组，再运行逻辑 target Overlay、结构检查、强制 `mihomo -t` 和 Output。自定义规则仍拥有最高优先级。此扩展限定 Smart-Config-Kit Normal + Mihomo 输出，固定倍率与 AI 清单只属于个人策略。
+
+真实地址配置必须位于 Git 仓库外；脚本检查实际路径并拒绝通过软链接指向仓库的设置文件。使用说明见 [personal-config.md](personal-config.md)。
+
 ## 2. 为什么不 Fork Smart-Config-Kit
 
 Smart-Config-Kit 自身已经有清晰的规则源、业务组、区域组和多端生成体系。我们的需求是在它之外增加：

@@ -19,7 +19,8 @@ module MPK
         env = provider_env(manifest, config)
         assignments = env.map { |k, v| "#{k}=#{Shellwords.escape(v)}" }.join(' ')
         command = "#{assignments} bash #{Shellwords.escape(BuildHelpers.bash_path_for(entry))} #{Shellwords.escape(BuildHelpers.bash_path_for(input_path))}"
-        BuildHelpers.run_streaming({}, 'bash', '-c', command, log: "provider #{manifest.id}", exec_label: "provider #{manifest.id}")
+        runtime_env = Gem.win_platform? ? {} : { 'PATH' => File.dirname(RbConfig.ruby) + File::PATH_SEPARATOR + ENV.fetch('PATH', '') }
+        BuildHelpers.run_streaming(runtime_env, 'bash', '-c', command, log: "provider #{manifest.id}", exec_label: "provider #{manifest.id}")
       when 'ruby'
         env = provider_env(manifest, config)
         BuildHelpers.run_streaming(env, RbConfig.ruby, entry, input_path, log: "provider #{manifest.id}", exec_label: "provider #{manifest.id}")

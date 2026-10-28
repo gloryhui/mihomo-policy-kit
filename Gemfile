@@ -1,5 +1,7 @@
 source 'https://rubygems.org'
 
+gem 'base64', '~> 0.3'
+
 gem 'roda', '~> 3.0'
 gem 'sequel', '~> 5.0'
 gem 'sqlite3', '~> 2.0'
